@@ -1,5 +1,14 @@
 <template>
   <aside class="tree-panel" style="flex: 0 0 auto">
+    <!-- Subsystems Header with selection controls -->
+    <div class="panel-heading" style="border-radius: 6px 6px 0 0; padding: 10px 12px; flex-shrink: 0;">
+      <span class="eyebrow" style="margin: 0; font-size: 11px;">Subsystems ({{ selectedMermaidSubsystems.size }}/{{ sortedSubsystems.length }})</span>
+      <div class="tree-header-actions" style="display: flex; gap: 6px;">
+        <button type="button" class="btn-tiny" @click="$emit('select-all')">All</button>
+        <button type="button" class="btn-tiny" @click="$emit('select-none')">Clear</button>
+      </div>
+    </div>
+
     <div class="cluster-list">
       <article
         v-for="cluster in sortedSubsystems"
@@ -7,13 +16,24 @@
         class="cluster-card"
         :class="{ selected: selectedClusterId === cluster.id }"
       >
-        <button type="button" class="cluster-main" @click="$emit('toggle-cluster', cluster.id)">
-          <span class="toggle-mark">{{ expandedClusters.has(cluster.id) ? '-' : '+' }}</span>
-          <span>
-            <strong>{{ cluster.name }}</strong>
-            <small>{{ cluster.id }} / {{ formatNumber(cluster.nodeCount) }} nodes</small>
-          </span>
-        </button>
+        <div class="cluster-header" style="display: flex; align-items: center; padding-right: 12px;">
+          <button type="button" class="cluster-main" style="flex: 1 1 0%;" @click="$emit('toggle-cluster', cluster.id)">
+            <span class="toggle-mark">{{ expandedClusters.has(cluster.id) ? '-' : '+' }}</span>
+            <span>
+              <strong>{{ cluster.name }}</strong>
+              <small>{{ cluster.id }} / {{ formatNumber(cluster.nodeCount) }} nodes</small>
+            </span>
+          </button>
+          <input
+            type="checkbox"
+            :id="'chk-' + cluster.id"
+            :checked="selectedMermaidSubsystems.has(cluster.id)"
+            @change="$emit('toggle-mermaid-subsystem', cluster.id)"
+            class="cluster-checkbox"
+            style="cursor: pointer; width: 16px; height: 16px; accent-color: #2563eb; flex-shrink: 0;"
+            @click.stop
+          />
+        </div>
 
         <div v-if="expandedClusters.has(cluster.id)" class="cluster-detail">
           <div class="cluster-meta">
@@ -76,10 +96,11 @@
 defineProps({
   sortedSubsystems: { type: Array, required: true },
   selectedClusterId: { type: [String, Number], default: null },
-  expandedClusters: { type: Object, required: true } // Set
+  expandedClusters: { type: Object, required: true }, // Set
+  selectedMermaidSubsystems: { type: Object, required: true } // Set
 })
 
-defineEmits(['toggle-cluster'])
+defineEmits(['toggle-cluster', 'toggle-mermaid-subsystem', 'select-all', 'select-none'])
 
 function clusterItems(cluster) {
   const items = []

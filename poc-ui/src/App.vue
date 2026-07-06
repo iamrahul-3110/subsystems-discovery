@@ -62,79 +62,126 @@
           :statusText="statusText"
         />
 
-        <section v-if="!discovery" class="empty-panel">
-          <div class="empty-card">
-            <p class="eyebrow">Ready for POC</p>
-            <h2>Generate a graph, then discover subsystem boundaries.</h2>
-            <p>
-              The demo creates application-specific dummy relations, runs Leiden discovery,
-              and turns the result into a Graph Intelligence view.
-            </p>
-          </div>
-        </section>
-
-        <template v-else>
-          <MetricsGrid
-            :totalNodes="discovery.summary.totalNodes"
-            :totalEdges="discovery.summary.totalEdges"
-            :subsystemCount="discovery.summary.subsystemCount"
-            :averageStability="discovery.summary.averageStability"
-          />
-
-          <div class="workspace-section-header">
-            <h2>Cluster Tree Subsystems and associated nodes graph</h2>
-            <button
-              type="button"
-              class="collapse-toggle-btn icon-only"
-              @click="isDiscoveryCollapsed = !isDiscoveryCollapsed"
-              :title="isDiscoveryCollapsed ? 'Expand Viewport' : 'Collapse Viewport'"
-            >
-              <svg v-if="isDiscoveryCollapsed" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-                <path d="M18 15l-6-6-6 6" />
-              </svg>
-            </button>
-          </div>
-
-          <section
-            class="discovery-grid"
-            :class="{
-              'collapsed': isDiscoveryCollapsed,
-              'summary-collapsed': isSummaryCollapsed
-            }"
-            ref="resizerContainerRef"
+        <!-- Tab navigation -->
+        <div class="main-tab-nav">
+          <button
+            id="tab-btn-discovery"
+            type="button"
+            class="main-tab-btn"
+            :class="{ active: activeTab === 'discovery' }"
+            @click="activeTab = 'discovery'"
           >
-            <ClusterTree
-              :sortedSubsystems="sortedSubsystems"
-              :selectedClusterId="selectedClusterId"
-              :expandedClusters="expandedClusters"
-              :style="{ width: treeWidth + 'px', flex: '0 0 auto' }"
-              @toggle-cluster="toggleCluster"
-            />
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/>
+            </svg>
+            Subsystem Discovery
+          </button>
+          <button
+            id="tab-btn-boundary"
+            type="button"
+            class="main-tab-btn"
+            :class="{ active: activeTab === 'boundary' }"
+            @click="activeTab = 'boundary'"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 12h16M12 4v16"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+            Boundary Node Detection
+            <span v-if="discovery?.discoveryRunId" class="tab-run-badge">Run {{ discovery.discoveryRunId }}</span>
+          </button>
+        </div>
 
-            <div class="panel-resizer" :class="{ resizing: isResizing }" @mousedown="onResizerMouseDown">
-              <div class="resizer-line"></div>
+        <!-- Discovery tab -->
+        <template v-if="activeTab === 'discovery'">
+          <section v-if="!discovery" class="empty-panel">
+            <div class="empty-card">
+              <p class="eyebrow">Ready for POC</p>
+              <h2>Generate a graph, then discover subsystem boundaries.</h2>
+              <p>
+                The demo creates application-specific dummy relations, runs Leiden discovery,
+                and turns the result into a Graph Intelligence view.
+              </p>
             </div>
-
-            <DiagramStage
-              ref="diagramStageRef"
-              :mermaidSvg="mermaidSvg"
-              :loadingDiscovery="loading.discovery"
-              :sortedSubsystems="sortedSubsystems"
-              :selectedCluster="selectedCluster"
-              @toggle-cluster="toggleCluster"
-            />
           </section>
 
-          <ArchitectureSummary
-            :summaryText="summaryText"
-            :formattedSummaryHtml="formattedSummaryHtml"
-            :actualModelDisplay="actualModelDisplay"
-            :isCollapsed="isSummaryCollapsed"
-            :isDiscoveryCollapsed="isDiscoveryCollapsed"
-            @toggle-collapse="isSummaryCollapsed = !isSummaryCollapsed"
+          <template v-else>
+            <MetricsGrid
+              :totalNodes="discovery.summary.totalNodes"
+              :totalEdges="discovery.summary.totalEdges"
+              :subsystemCount="discovery.summary.subsystemCount"
+              :averageStability="discovery.summary.averageStability"
+            />
+
+            <div class="workspace-section-header">
+              <h2>Cluster Tree Subsystems and associated nodes graph</h2>
+              <button
+                type="button"
+                class="collapse-toggle-btn icon-only"
+                @click="isDiscoveryCollapsed = !isDiscoveryCollapsed"
+                :title="isDiscoveryCollapsed ? 'Expand Viewport' : 'Collapse Viewport'"
+              >
+                <svg v-if="isDiscoveryCollapsed" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M18 15l-6-6-6 6" />
+                </svg>
+              </button>
+            </div>
+
+            <section
+              class="discovery-grid"
+              :class="{
+                'collapsed': isDiscoveryCollapsed,
+                'summary-collapsed': isSummaryCollapsed
+              }"
+              ref="resizerContainerRef"
+            >
+              <ClusterTree
+                :sortedSubsystems="sortedSubsystems"
+                :selectedClusterId="selectedClusterId"
+                :expandedClusters="expandedClusters"
+                :selectedMermaidSubsystems="selectedMermaidSubsystems"
+                :style="{ width: treeWidth + 'px', flex: '0 0 auto' }"
+                @toggle-cluster="toggleCluster"
+                @toggle-mermaid-subsystem="toggleMermaidSubsystem"
+                @select-all="selectAllSubsystems"
+                @select-none="selectNoneSubsystems"
+              />
+
+              <div class="panel-resizer" :class="{ resizing: isResizing }" @mousedown="onResizerMouseDown">
+                <div class="resizer-line"></div>
+              </div>
+
+              <DiagramStage
+                ref="diagramStageRef"
+                :mermaidSvg="mermaidSvg"
+                :loadingDiscovery="loading.discovery"
+                :sortedSubsystems="sortedSubsystems"
+                :selectedCluster="selectedCluster"
+                @toggle-cluster="toggleCluster"
+              />
+            </section>
+
+            <ArchitectureSummary
+              :summaryText="summaryText"
+              :formattedSummaryHtml="formattedSummaryHtml"
+              :actualModelDisplay="actualModelDisplay"
+              :isCollapsed="isSummaryCollapsed"
+              :isDiscoveryCollapsed="isDiscoveryCollapsed"
+              @toggle-collapse="isSummaryCollapsed = !isSummaryCollapsed"
+            />
+          </template>
+        </template>
+
+        <!-- Boundary tab -->
+        <template v-if="activeTab === 'boundary'">
+          <BoundaryAnalysisPanel
+            :externalResult="boundaryResult"
+            :loadingExternal="loading.boundary"
+            :boundarySummaryHtml="boundarySummaryHtml"
+            :loadingLlm="loading.boundarySummary"
+            :llmModelUsed="boundaryLlmModelUsed"
           />
         </template>
       </main>
@@ -155,9 +202,11 @@ import MetricsGrid from './components/MetricsGrid.vue'
 import ClusterTree from './components/ClusterTree.vue'
 import DiagramStage from './components/DiagramStage.vue'
 import ArchitectureSummary from './components/ArchitectureSummary.vue'
+import BoundaryAnalysisPanel from './components/BoundaryAnalysisPanel.vue'
 
 const isDiscoveryCollapsed = ref(false)
 const isSummaryCollapsed = ref(false)
+const activeTab = ref('discovery') // 'discovery' | 'boundary'
 
 mermaid.initialize({
   startOnLoad: false,
@@ -167,6 +216,7 @@ mermaid.initialize({
     htmlLabels: true,
     curve: 'basis'
   },
+  maxTextSize: 1000000,
   themeVariables: {
     primaryColor: '#eff6ff',
     primaryTextColor: '#0f172a',
@@ -178,6 +228,7 @@ mermaid.initialize({
 
 const SERVER_CONTEXT = `${['code', 'analy', 'zer'].join('')}/server`
 const API_BASE = `http://localhost:8081/${SERVER_CONTEXT}/api/poc`
+const BOUNDARY_API = `http://localhost:8081/${SERVER_CONTEXT}/api/codeanalyzer/boundary`
 
 const applications = [
   { label: 'Amazon', value: 'AMAZON' },
@@ -210,6 +261,7 @@ const selectedClusterId = ref(null)
 const errorMessage = ref('')
 const successMessage = ref('')
 const expandedClusters = reactive(new Set())
+const selectedMermaidSubsystems = ref(new Set())
 const summaryMeta = reactive({ provider: '', fallback: false, llmModel: '' })
 
 const diagramStageRef = ref(null)
@@ -246,7 +298,7 @@ watch(errorMessage, (newVal) => {
       if (errorMessage.value === newVal) {
         errorMessage.value = ''
       }
-    }, 5000)
+    }, 8000)
   }
 })
 
@@ -265,8 +317,14 @@ const llm = reactive({
 const loading = reactive({
   dataset: false,
   discovery: false,
-  summary: false
+  summary: false,
+  boundary: false,
+  boundarySummary: false
 })
+
+const boundaryResult      = ref(null)
+const boundarySummaryHtml = ref('')
+const boundaryLlmModelUsed = ref('')
 
 const isBusy = computed(() => loading.dataset || loading.discovery || loading.summary)
 
@@ -283,16 +341,22 @@ const selectedCluster = computed(() => {
 })
 
 const statusText = computed(() => {
-  if (loading.dataset) return 'Generating graph'
-  if (loading.discovery) return 'Running Leiden'
-  if (loading.summary) return 'Generating summary'
-  if (discovery.value) return 'Discovery ready'
-  if (dataset.value) return 'Dataset ready'
+  if (loading.dataset)         return 'Generating graph'
+  if (loading.discovery)       return 'Running Leiden'
+  if (loading.summary)         return 'Generating summary'
+  if (loading.boundary)        return 'Detecting boundary nodes'
+  if (loading.boundarySummary) return 'Generating boundary AI summary'
+  if (discovery.value)         return 'Discovery ready'
+  if (dataset.value)           return 'Dataset ready'
   return 'Ready'
 })
 
 watch(
-  () => [discovery.value, Array.from(expandedClusters).join('|')],
+  () => [
+    discovery.value,
+    Array.from(expandedClusters).join('|'),
+    Array.from(selectedMermaidSubsystems.value).join('|')
+  ],
   async () => {
     if (discovery.value) {
       await renderMermaid()
@@ -306,6 +370,9 @@ async function generateDataset() {
   errorMessage.value = ''
   successMessage.value = ''
   discovery.value = null
+  boundaryResult.value = null
+  boundarySummaryHtml.value = ''
+  boundaryLlmModelUsed.value = ''
   dataset.value = null
   mermaidSvg.value = ''
   summaryText.value = ''
@@ -313,6 +380,7 @@ async function generateDataset() {
   summaryMeta.provider = ''
   summaryMeta.fallback = false
   expandedClusters.clear()
+  selectedMermaidSubsystems.value = new Set()
   diagramStageRef.value?.resetZoom()
 
   try {
@@ -340,6 +408,9 @@ async function runDiscovery() {
   formattedSummaryHtml.value = ''
   summaryMeta.provider = ''
   summaryMeta.fallback = false
+  boundaryResult.value = null
+  boundarySummaryHtml.value = ''
+  boundaryLlmModelUsed.value = ''
   expandedClusters.clear()
   diagramStageRef.value?.resetZoom()
 
@@ -348,17 +419,45 @@ async function runDiscovery() {
       params: discoveryParams()
     })
     discovery.value = response.data
-    successMessage.value = `Leiden discovery completed successfully with ${discovery.value.summary.subsystemCount} subsystems.`
+    successMessage.value = `Leiden discovery completed with ${discovery.value.summary.subsystemCount} subsystems. Running boundary analysis…`
     selectedClusterId.value = sortedSubsystems.value[0]?.id || null
     if (selectedClusterId.value) {
       expandedClusters.add(selectedClusterId.value)
     }
+    selectedMermaidSubsystems.value = new Set(sortedSubsystems.value.map(c => c.id))
     await nextTick()
     await renderMermaid()
+    // Auto-run boundary analysis using the completed discovery run
+    if (discovery.value?.discoveryRunId) {
+      await runBoundaryAnalysis(discovery.value.discoveryRunId)
+    }
   } catch (error) {
     handleError(error, 'Subsystem discovery failed')
   } finally {
     loading.discovery = false
+  }
+}
+
+async function runBoundaryAnalysis(runId) {
+  loading.boundary = true
+  boundaryResult.value = null
+  boundarySummaryHtml.value = ''
+  boundaryLlmModelUsed.value = ''
+  try {
+    const res = await axios.post(`${BOUNDARY_API}/analyze`, {
+      discoveryRunId: runId,
+      includeAiSummary: true,
+      llmModel: llm.model,
+      summaryType: llm.summaryType
+    })
+    boundaryResult.value = res.data
+    boundarySummaryHtml.value = res.data.aiSummary || ''
+    boundaryLlmModelUsed.value = res.data.llmModel || llm.model
+    successMessage.value = `Boundary analysis + AI recommendations ready — ${res.data.boundaryNodeCount} boundary nodes detected.`
+  } catch (err) {
+    handleError(err, 'Boundary analysis failed')
+  } finally {
+    loading.boundary = false
   }
 }
 
@@ -411,6 +510,24 @@ function toggleCluster(clusterId) {
   }
 }
 
+function toggleMermaidSubsystem(clusterId) {
+  const next = new Set(selectedMermaidSubsystems.value)
+  if (next.has(clusterId)) {
+    next.delete(clusterId)
+  } else {
+    next.add(clusterId)
+  }
+  selectedMermaidSubsystems.value = next
+}
+
+function selectAllSubsystems() {
+  selectedMermaidSubsystems.value = new Set(sortedSubsystems.value.map(c => c.id))
+}
+
+function selectNoneSubsystems() {
+  selectedMermaidSubsystems.value = new Set()
+}
+
 async function renderMermaid() {
   try {
     const graph = buildMermaidGraph()
@@ -448,7 +565,12 @@ function onResizerMouseUp() {
 }
 
 function buildMermaidGraph() {
-  const clusters = sortedSubsystems.value.slice(0, 18)
+  const clusters = sortedSubsystems.value.filter(c => selectedMermaidSubsystems.value.has(c.id))
+  
+  if (clusters.length === 0) {
+    return 'flowchart LR\n  empty["No subsystems selected"]\n  classDef emptyNode fill:#f8fafc,stroke:#94a3b8,color:#64748b,font-style:italic\n  class empty emptyNode'
+  }
+
   const clusterIds = new Set(clusters.map((cluster) => cluster.id))
   const lines = ['flowchart LR']
 
@@ -635,7 +757,8 @@ function formatNumber(value) {
 }
 
 function handleError(error, fallback) {
-  const serverError = error?.response?.data?.error
-  errorMessage.value = serverError ? `${fallback}: ${serverError}` : `${fallback}: ${error.message}`
+  const data = error?.response?.data
+  const serverMessage = data?.message || data?.error || error.message
+  errorMessage.value = serverMessage ? `${fallback}: ${serverMessage}` : fallback
 }
 </script>

@@ -38,3 +38,15 @@ subsystem:
     connect-timeout-ms: 10000
 
     read-timeout-ms: 180000
+
+boundary:
+  analysis:
+    min-cross-edges: 1
+    min-cross-weight: 0.0
+    min-boundary-score: 0.0
+    medium-coupling-weight-threshold: 8.0
+    medium-coupling-edge-threshold: 4
+    high-coupling-weight-threshold: 20.0
+    high-coupling-edge-threshold: 10
+    default-top-node-limit: 25
+    default-hotspot-limit: 20

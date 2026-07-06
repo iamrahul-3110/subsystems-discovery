@@ -147,7 +147,8 @@ public class SubsystemDiscoveryService {
                             WEIGHTING_VERSION
                     );
 
-                    // Reconstruct response with active run ID just to ensure consistency
+                    // Reconstruct response with active run ID — include nodeAssignments for
+                    // boundary analysis (null for legacy rows that pre-date v2 persistence).
                     return new SubsystemDiscoveryResponse(
                             existingMaster.getDiscoveryRunId(),
                             resolvedId,
@@ -156,7 +157,7 @@ public class SubsystemDiscoveryService {
                             summary,
                             persisted.subsystems(),
                             persisted.subsystemLinks(),
-                            null
+                            persisted.nodeAssignments()
                     );
                 } catch (Exception e) {
                     // Fall back to executing Leiden if deserialization fails
@@ -211,8 +212,10 @@ public class SubsystemDiscoveryService {
             master.setCompletedAt(completedAt);
             master.setTotalSubsystems(subsystems.size());
             master.setAvgStabilityScore(round(averageStability));
+            // Persist subsystems, links, and nodeAssignments so that boundary analysis
+            // can work from an existing discoveryRunId without re-running Leiden.
             SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
-                    response.subsystems(), response.subsystemLinks());
+                    response.subsystems(), response.subsystemLinks(), response.nodeAssignments());
             master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
             master.setCreatedByEnvelope("dummy-envelope".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             master.setCreatedByHash("dummy-hash".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -343,7 +346,7 @@ public class SubsystemDiscoveryService {
                 summary,
                 persisted.subsystems(),
                 persisted.subsystemLinks(),
-                null,
+                persisted.nodeAssignments(),
                 cachedSummary
         );
     }

@@ -5,7 +5,6 @@ import com.example.subsystemdiscovery.discovery.dto.SubsystemDto;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemLinkDto;
 import com.example.subsystemdiscovery.discovery.dto.SummaryDto;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.util.List;
 
 /**
@@ -17,15 +16,15 @@ import java.util.List;
  * not generate per-subsystem descriptions.
  */
 public record LlmDiscoveryResponse(
-        @JsonIgnore Long discoveryRunId,
-        @JsonIgnore Long applicationId,
-        @JsonIgnore String applicationKey,
+        Long discoveryRunId,
+        Long applicationId,
+        String applicationKey,
         String analysisTime,
-        @JsonIgnore AlgorithmInfoDto algorithm,
+        AlgorithmInfoDto algorithm,
         SummaryDto summary,
         List<SubsystemDto> subsystems,
         List<SubsystemLinkDto> subsystemLinks,
-        @JsonIgnore List<NodeAssignmentDto> nodeAssignments,
+        List<NodeAssignmentDto> nodeAssignments,
         String llmArchitecturalSummary
 ) {
 }
