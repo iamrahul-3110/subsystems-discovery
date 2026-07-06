@@ -77,7 +77,8 @@ public class SubsystemDiscoveryServiceTest {
 
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                 Collections.emptyList(),
-                Collections.emptyList()
+                Collections.emptyList(),
+                null
         );
         master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
 
@@ -114,7 +115,8 @@ public class SubsystemDiscoveryServiceTest {
 
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                 Collections.emptyList(),
-                Collections.emptyList()
+                Collections.emptyList(),
+                null
         );
         master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
 

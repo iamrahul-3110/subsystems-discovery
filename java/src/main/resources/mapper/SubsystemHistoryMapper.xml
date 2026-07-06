@@ -46,8 +46,25 @@
         )
     </insert>
 
+    <resultMap id="SubsystemRunMasterMap" type="com.example.subsystemdiscovery.repository.entity.SubsystemRunMaster">
+        <id property="discoveryRunId" column="discovery_run_id"/>
+        <result property="analysisTime" column="analysis_time"/>
+        <result property="runSequence" column="run_sequence"/>
+        <result property="runs" column="runs"/>
+        <result property="consensusThreshold" column="consensus_threshold"/>
+        <result property="resolution" column="resolution"/>
+        <result property="discoveryResult" column="discovery_result"/>
+        <result property="totalSubsystems" column="total_subsystems"/>
+        <result property="avgStabilityScore" column="avg_stability_score"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="completedAt" column="completed_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="createdByEnvelope" column="created_by_envelope"/>
+        <result property="createdByHash" column="created_by_hash"/>
+    </resultMap>
+
     <select id="selectMasterByConfig"
-            resultType="com.example.subsystemdiscovery.repository.entity.SubsystemRunMaster">
+            resultMap="SubsystemRunMasterMap">
         SELECT discovery_run_id,
                analysis_time,
                run_sequence,
@@ -60,8 +77,8 @@
                started_at,
                completed_at,
                created_at,
-               created_by_envelope AS createdByEnvelope,
-               created_by_hash AS createdByHash
+               created_by_envelope,
+               created_by_hash
           FROM tb_gi_subsystems_history
          WHERE analysis_time = CAST(#{analysisTime} AS TIMESTAMP)
            AND runs = #{runs}
@@ -74,6 +91,27 @@
     <select id="selectHistoryResult"
             resultType="string">
         SELECT discovery_result
+          FROM tb_gi_subsystems_history
+         WHERE discovery_run_id = #{discoveryRunId}
+         LIMIT 1
+    </select>
+
+    <select id="selectMasterById"
+            resultMap="SubsystemRunMasterMap">
+        SELECT discovery_run_id,
+               analysis_time,
+               run_sequence,
+               runs,
+               consensus_threshold,
+               resolution,
+               discovery_result,
+               total_subsystems,
+               avg_stability_score,
+               started_at,
+               completed_at,
+               created_at,
+               created_by_envelope,
+               created_by_hash
           FROM tb_gi_subsystems_history
          WHERE discovery_run_id = #{discoveryRunId}
          LIMIT 1
