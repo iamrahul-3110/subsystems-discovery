@@ -62,56 +62,48 @@
           :statusText="statusText"
         />
 
-        <!-- Tab navigation -->
-        <div class="main-tab-nav">
-          <button
-            id="tab-btn-discovery"
-            type="button"
-            class="main-tab-btn"
-            :class="{ active: activeTab === 'discovery' }"
-            @click="activeTab = 'discovery'"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/>
-            </svg>
-            Subsystem Discovery
-          </button>
-          <button
-            id="tab-btn-boundary"
-            type="button"
-            class="main-tab-btn"
-            :class="{ active: activeTab === 'boundary' }"
-            @click="activeTab = 'boundary'"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 12h16M12 4v16"/><circle cx="12" cy="12" r="3"/>
-            </svg>
-            Boundary Node Detection
-            <span v-if="discovery?.discoveryRunId" class="tab-run-badge">Run {{ discovery.discoveryRunId }}</span>
-          </button>
-        </div>
+        <section v-if="!discovery" class="empty-panel">
+          <div class="empty-card">
+            <p class="eyebrow">Ready for POC</p>
+            <h2>Generate a graph, then discover subsystem boundaries.</h2>
+            <p>
+              The demo creates application-specific dummy relations, runs Leiden discovery,
+              and turns the result into a Graph Intelligence view.
+            </p>
+          </div>
+        </section>
 
-        <!-- Discovery tab -->
-        <template v-if="activeTab === 'discovery'">
-          <section v-if="!discovery" class="empty-panel">
-            <div class="empty-card">
-              <p class="eyebrow">Ready for POC</p>
-              <h2>Generate a graph, then discover subsystem boundaries.</h2>
-              <p>
-                The demo creates application-specific dummy relations, runs Leiden discovery,
-                and turns the result into a Graph Intelligence view.
-              </p>
-            </div>
-          </section>
+        <template v-else>
+          <MetricsGrid
+            :totalNodes="discovery.summary.totalNodes"
+            :totalEdges="discovery.summary.totalEdges"
+            :subsystemCount="discovery.summary.subsystemCount"
+            :averageStability="discovery.summary.averageStability"
+          />
 
-          <template v-else>
-            <MetricsGrid
-              :totalNodes="discovery.summary.totalNodes"
-              :totalEdges="discovery.summary.totalEdges"
-              :subsystemCount="discovery.summary.subsystemCount"
-              :averageStability="discovery.summary.averageStability"
-            />
+          <!-- Tab Navigation for Discovery vs Boundary Analysis -->
+          <div class="view-tabs" style="display: flex; gap: 8px; border-bottom: 2px solid #cbd5e1; margin-bottom: 20px; margin-top: 16px;">
+            <button 
+              type="button" 
+              class="view-tab-btn" 
+              :class="{ active: currentTab === 'discovery' }"
+              @click="currentTab = 'discovery'"
+              style="padding: 10px 20px; border: none; background: none; font-weight: 700; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: #64748b; transition: all 0.2s;"
+            >
+              📊 Subsystem Graph
+            </button>
+            <button 
+              type="button" 
+              class="view-tab-btn" 
+              :class="{ active: currentTab === 'boundary' }"
+              @click="currentTab = 'boundary'"
+              style="padding: 10px 20px; border: none; background: none; font-weight: 700; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: #64748b; transition: all 0.2s;"
+            >
+              ⚡ Boundary Node Detection
+            </button>
+          </div>
 
+          <div v-show="currentTab === 'discovery'">
             <div class="workspace-section-header">
               <h2>Cluster Tree Subsystems and associated nodes graph</h2>
               <button
@@ -145,8 +137,8 @@
                 :style="{ width: treeWidth + 'px', flex: '0 0 auto' }"
                 @toggle-cluster="toggleCluster"
                 @toggle-mermaid-subsystem="toggleMermaidSubsystem"
-                @select-all="selectAllSubsystems"
-                @select-none="selectNoneSubsystems"
+                @select-all="selectAllMermaidSubsystems"
+                @select-none="selectNoneMermaidSubsystems"
               />
 
               <div class="panel-resizer" :class="{ resizing: isResizing }" @mousedown="onResizerMouseDown">
@@ -171,18 +163,18 @@
               :isDiscoveryCollapsed="isDiscoveryCollapsed"
               @toggle-collapse="isSummaryCollapsed = !isSummaryCollapsed"
             />
-          </template>
-        </template>
+          </div>
 
-        <!-- Boundary tab -->
-        <template v-if="activeTab === 'boundary'">
-          <BoundaryAnalysisPanel
-            :externalResult="boundaryResult"
-            :loadingExternal="loading.boundary"
-            :boundarySummaryHtml="boundarySummaryHtml"
-            :loadingLlm="loading.boundarySummary"
-            :llmModelUsed="boundaryLlmModelUsed"
-          />
+          <div v-show="currentTab === 'boundary'">
+            <BoundaryNodesPanel 
+              :boundaryData="boundaryData"
+              :loading="loadingBoundary"
+              :nodeLimit="boundaryNodeLimit"
+              :sortOrder="boundarySortOrder"
+              @update:nodeLimit="boundaryNodeLimit = $event"
+              @update:sortOrder="boundarySortOrder = $event"
+            />
+          </div>
         </template>
       </main>
     </div>
@@ -202,11 +194,13 @@ import MetricsGrid from './components/MetricsGrid.vue'
 import ClusterTree from './components/ClusterTree.vue'
 import DiagramStage from './components/DiagramStage.vue'
 import ArchitectureSummary from './components/ArchitectureSummary.vue'
-import BoundaryAnalysisPanel from './components/BoundaryAnalysisPanel.vue'
+import BoundaryNodesPanel from './components/BoundaryNodesPanel.vue'
 
 const isDiscoveryCollapsed = ref(false)
 const isSummaryCollapsed = ref(false)
-const activeTab = ref('discovery') // 'discovery' | 'boundary'
+const currentTab = ref('discovery')
+const boundaryData = ref(null)
+const loadingBoundary = ref(false)
 
 mermaid.initialize({
   startOnLoad: false,
@@ -216,7 +210,6 @@ mermaid.initialize({
     htmlLabels: true,
     curve: 'basis'
   },
-  maxTextSize: 1000000,
   themeVariables: {
     primaryColor: '#eff6ff',
     primaryTextColor: '#0f172a',
@@ -228,7 +221,6 @@ mermaid.initialize({
 
 const SERVER_CONTEXT = `${['code', 'analy', 'zer'].join('')}/server`
 const API_BASE = `http://localhost:8081/${SERVER_CONTEXT}/api/poc`
-const BOUNDARY_API = `http://localhost:8081/${SERVER_CONTEXT}/api/codeanalyzer/boundary`
 
 const applications = [
   { label: 'Amazon', value: 'AMAZON' },
@@ -261,8 +253,10 @@ const selectedClusterId = ref(null)
 const errorMessage = ref('')
 const successMessage = ref('')
 const expandedClusters = reactive(new Set())
-const selectedMermaidSubsystems = ref(new Set())
+const selectedMermaidSubsystems = reactive(new Set())
 const summaryMeta = reactive({ provider: '', fallback: false, llmModel: '' })
+
+const BOUNDARY_API = `http://localhost:8081/${SERVER_CONTEXT}/api/codeanalyzer/subsystem/boundary-nodes`
 
 const diagramStageRef = ref(null)
 
@@ -298,7 +292,7 @@ watch(errorMessage, (newVal) => {
       if (errorMessage.value === newVal) {
         errorMessage.value = ''
       }
-    }, 8000)
+    }, 5000)
   }
 })
 
@@ -317,14 +311,8 @@ const llm = reactive({
 const loading = reactive({
   dataset: false,
   discovery: false,
-  summary: false,
-  boundary: false,
-  boundarySummary: false
+  summary: false
 })
-
-const boundaryResult      = ref(null)
-const boundarySummaryHtml = ref('')
-const boundaryLlmModelUsed = ref('')
 
 const isBusy = computed(() => loading.dataset || loading.discovery || loading.summary)
 
@@ -341,22 +329,16 @@ const selectedCluster = computed(() => {
 })
 
 const statusText = computed(() => {
-  if (loading.dataset)         return 'Generating graph'
-  if (loading.discovery)       return 'Running Leiden'
-  if (loading.summary)         return 'Generating summary'
-  if (loading.boundary)        return 'Detecting boundary nodes'
-  if (loading.boundarySummary) return 'Generating boundary AI summary'
-  if (discovery.value)         return 'Discovery ready'
-  if (dataset.value)           return 'Dataset ready'
+  if (loading.dataset) return 'Generating graph'
+  if (loading.discovery) return 'Running Leiden'
+  if (loading.summary) return 'Generating summary'
+  if (discovery.value) return 'Discovery ready'
+  if (dataset.value) return 'Dataset ready'
   return 'Ready'
 })
 
 watch(
-  () => [
-    discovery.value,
-    Array.from(expandedClusters).join('|'),
-    Array.from(selectedMermaidSubsystems.value).join('|')
-  ],
+  () => [discovery.value, Array.from(expandedClusters).join('|'), Array.from(selectedMermaidSubsystems).join('|')],
   async () => {
     if (discovery.value) {
       await renderMermaid()
@@ -370,9 +352,6 @@ async function generateDataset() {
   errorMessage.value = ''
   successMessage.value = ''
   discovery.value = null
-  boundaryResult.value = null
-  boundarySummaryHtml.value = ''
-  boundaryLlmModelUsed.value = ''
   dataset.value = null
   mermaidSvg.value = ''
   summaryText.value = ''
@@ -380,7 +359,9 @@ async function generateDataset() {
   summaryMeta.provider = ''
   summaryMeta.fallback = false
   expandedClusters.clear()
-  selectedMermaidSubsystems.value = new Set()
+  selectedMermaidSubsystems.clear()
+  boundaryData.value = null
+  currentTab.value = 'discovery'
   diagramStageRef.value?.resetZoom()
 
   try {
@@ -408,10 +389,10 @@ async function runDiscovery() {
   formattedSummaryHtml.value = ''
   summaryMeta.provider = ''
   summaryMeta.fallback = false
-  boundaryResult.value = null
-  boundarySummaryHtml.value = ''
-  boundaryLlmModelUsed.value = ''
   expandedClusters.clear()
+  selectedMermaidSubsystems.clear()
+  boundaryData.value = null
+  currentTab.value = 'discovery'
   diagramStageRef.value?.resetZoom()
 
   try {
@@ -419,45 +400,26 @@ async function runDiscovery() {
       params: discoveryParams()
     })
     discovery.value = response.data
-    successMessage.value = `Leiden discovery completed with ${discovery.value.summary.subsystemCount} subsystems. Running boundary analysis…`
+    successMessage.value = `Leiden discovery completed successfully with ${discovery.value.summary.subsystemCount} subsystems.`
     selectedClusterId.value = sortedSubsystems.value[0]?.id || null
     if (selectedClusterId.value) {
       expandedClusters.add(selectedClusterId.value)
     }
-    selectedMermaidSubsystems.value = new Set(sortedSubsystems.value.map(c => c.id))
+    
+    // Select all by default for visualization
+    if (discovery.value?.subsystems) {
+      discovery.value.subsystems.forEach(sub => selectedMermaidSubsystems.add(sub.id))
+    }
+
+    // Trigger boundary node detection in background
+    fetchBoundaryNodes()
+
     await nextTick()
     await renderMermaid()
-    // Auto-run boundary analysis using the completed discovery run
-    if (discovery.value?.discoveryRunId) {
-      await runBoundaryAnalysis(discovery.value.discoveryRunId)
-    }
   } catch (error) {
     handleError(error, 'Subsystem discovery failed')
   } finally {
     loading.discovery = false
-  }
-}
-
-async function runBoundaryAnalysis(runId) {
-  loading.boundary = true
-  boundaryResult.value = null
-  boundarySummaryHtml.value = ''
-  boundaryLlmModelUsed.value = ''
-  try {
-    const res = await axios.post(`${BOUNDARY_API}/analyze`, {
-      discoveryRunId: runId,
-      includeAiSummary: true,
-      llmModel: llm.model,
-      summaryType: llm.summaryType
-    })
-    boundaryResult.value = res.data
-    boundarySummaryHtml.value = res.data.aiSummary || ''
-    boundaryLlmModelUsed.value = res.data.llmModel || llm.model
-    successMessage.value = `Boundary analysis + AI recommendations ready — ${res.data.boundaryNodeCount} boundary nodes detected.`
-  } catch (err) {
-    handleError(err, 'Boundary analysis failed')
-  } finally {
-    loading.boundary = false
   }
 }
 
@@ -510,24 +472,6 @@ function toggleCluster(clusterId) {
   }
 }
 
-function toggleMermaidSubsystem(clusterId) {
-  const next = new Set(selectedMermaidSubsystems.value)
-  if (next.has(clusterId)) {
-    next.delete(clusterId)
-  } else {
-    next.add(clusterId)
-  }
-  selectedMermaidSubsystems.value = next
-}
-
-function selectAllSubsystems() {
-  selectedMermaidSubsystems.value = new Set(sortedSubsystems.value.map(c => c.id))
-}
-
-function selectNoneSubsystems() {
-  selectedMermaidSubsystems.value = new Set()
-}
-
 async function renderMermaid() {
   try {
     const graph = buildMermaidGraph()
@@ -565,12 +509,7 @@ function onResizerMouseUp() {
 }
 
 function buildMermaidGraph() {
-  const clusters = sortedSubsystems.value.filter(c => selectedMermaidSubsystems.value.has(c.id))
-  
-  if (clusters.length === 0) {
-    return 'flowchart LR\n  empty["No subsystems selected"]\n  classDef emptyNode fill:#f8fafc,stroke:#94a3b8,color:#64748b,font-style:italic\n  class empty emptyNode'
-  }
-
+  const clusters = sortedSubsystems.value.filter(sub => selectedMermaidSubsystems.has(sub.id)).slice(0, 18)
   const clusterIds = new Set(clusters.map((cluster) => cluster.id))
   const lines = ['flowchart LR']
 
@@ -760,5 +699,49 @@ function handleError(error, fallback) {
   const data = error?.response?.data
   const serverMessage = data?.message || data?.error || error.message
   errorMessage.value = serverMessage ? `${fallback}: ${serverMessage}` : fallback
+}
+
+const boundaryNodeLimit = ref(20)
+const boundarySortOrder = ref('TOP')
+
+watch([boundaryNodeLimit, boundarySortOrder], () => {
+  fetchBoundaryNodes()
+})
+
+async function fetchBoundaryNodes() {
+  if (!discovery.value || !discovery.value.discoveryRunId) return
+  loadingBoundary.value = true
+  try {
+    const response = await axios.post(
+      `${BOUNDARY_API}`,
+      {
+        discoveryRunId: discovery.value.discoveryRunId,
+        nodeLimit: boundaryNodeLimit.value,
+        sortOrder: boundarySortOrder.value
+      }
+    )
+    boundaryData.value = response.data
+  } catch (error) {
+    handleError(error, 'Boundary node detection failed')
+  } finally {
+    loadingBoundary.value = false
+  }
+}
+
+function toggleMermaidSubsystem(clusterId) {
+  if (selectedMermaidSubsystems.has(clusterId)) {
+    selectedMermaidSubsystems.delete(clusterId)
+  } else {
+    selectedMermaidSubsystems.add(clusterId)
+  }
+}
+
+function selectAllMermaidSubsystems() {
+  if (!discovery.value) return
+  discovery.value.subsystems.forEach(sub => selectedMermaidSubsystems.add(sub.id))
+}
+
+function selectNoneMermaidSubsystems() {
+  selectedMermaidSubsystems.clear()
 }
 </script>

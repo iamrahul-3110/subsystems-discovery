@@ -3,26 +3,21 @@ package com.example.subsystemdiscovery.boundaryanalysis.dto;
 import java.util.List;
 
 /**
- * A method, class, or package that hands off from one discovered subsystem to another.
+ * Represents a single boundary node — a node whose edges cross subsystem boundaries.
+ *
+ * <p>Fields are computed on demand from the existing subsystem discovery result
+ * and the weighted graph edge list. Nothing is persisted.
  */
 public record BoundaryNodeDto(
         Long nodeId,
-        String name,
-        String qualifiedName,
-        String nodeType,
-        String packageName,
-        String homeSubsystemId,
-        String homeSubsystemName,
-        int totalDegree,
-        int crossSubsystemEdges,
-        double totalWeight,
-        double crossSubsystemWeight,
-        int foreignSubsystemCount,
-        double boundaryScore,
-        double importanceScore,
-        String riskLevel,
-        String boundaryRole,
-        String recommendedAction,
-        List<CrossSubsystemLinkDto> crossSubsystemLinks
+        String nodeName,
+        String subsystemId,
+        String subsystemName,
+        List<String> connectedSubsystems,
+        int crossSubsystemEdgeCount,
+        int incomingCrossEdges,
+        int outgoingCrossEdges,
+        int totalConnectedSubsystems,
+        double boundaryScore
 ) {
 }

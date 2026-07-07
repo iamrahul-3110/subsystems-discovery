@@ -1,4 +1,5 @@
 package com.example.subsystemdiscovery.discovery;
+
 import com.example.subsystemdiscovery.llm.LlmSubsystemDiscoveryService;
 
 import com.example.subsystemdiscovery.discovery.dto.AlgorithmInfoDto;
@@ -39,7 +40,8 @@ import java.util.List;
 /**
  * Orchestrates the full subsystem-discovery pipeline.
  *
- * <p>All data is read from the <strong>history tables</strong>
+ * <p>
+ * All data is read from the <strong>history tables</strong>
  * ({@code tb_node_history}, {@code tb_node_detail_history},
  * {@code tb_node_relation_history}) via {@link GraphExtractionService}.
  * If the application snapshot credentials are not provided in the parameters,
@@ -49,8 +51,7 @@ import java.util.List;
 @Service
 public class SubsystemDiscoveryService {
 
-    private static final String WEIGHTING_VERSION =
-            "v2-method5-classmethod4.5-class4-pkg1.5-nodecentric-adaptive";
+    private static final String WEIGHTING_VERSION = "v2-method5-classmethod4.5-class4-pkg1.5-nodecentric-adaptive";
 
     private final GraphExtractionService graphExtractionService;
     private final WeightedGraphBuilder weightedGraphBuilder;
@@ -63,27 +64,27 @@ public class SubsystemDiscoveryService {
     private final ObjectMapper objectMapper;
 
     public SubsystemDiscoveryService(GraphExtractionService graphExtractionService,
-                                     WeightedGraphBuilder weightedGraphBuilder,
-                                     LeidenAlgorithmUtil leidenAlgorithmUtil,
-                                     ClusterAggregationUtil clusterAggregationUtil,
-                                     SubsystemLabelService subsystemLabelService,
-                                     LlmSubsystemDiscoveryService llmSubsystemDiscoveryService,
-                                     TbNodeHistoryMapper tbNodeHistoryMapper,
-                                     SubsystemHistoryMapper subsystemHistoryMapper,
-                                     ObjectMapper objectMapper) {
-        this.graphExtractionService       = graphExtractionService;
-        this.weightedGraphBuilder         = weightedGraphBuilder;
-        this.leidenAlgorithmUtil          = leidenAlgorithmUtil;
-        this.clusterAggregationUtil       = clusterAggregationUtil;
-        this.subsystemLabelService        = subsystemLabelService;
+            WeightedGraphBuilder weightedGraphBuilder,
+            LeidenAlgorithmUtil leidenAlgorithmUtil,
+            ClusterAggregationUtil clusterAggregationUtil,
+            SubsystemLabelService subsystemLabelService,
+            LlmSubsystemDiscoveryService llmSubsystemDiscoveryService,
+            TbNodeHistoryMapper tbNodeHistoryMapper,
+            SubsystemHistoryMapper subsystemHistoryMapper,
+            ObjectMapper objectMapper) {
+        this.graphExtractionService = graphExtractionService;
+        this.weightedGraphBuilder = weightedGraphBuilder;
+        this.leidenAlgorithmUtil = leidenAlgorithmUtil;
+        this.clusterAggregationUtil = clusterAggregationUtil;
+        this.subsystemLabelService = subsystemLabelService;
         this.llmSubsystemDiscoveryService = llmSubsystemDiscoveryService;
-        this.tbNodeHistoryMapper          = tbNodeHistoryMapper;
-        this.subsystemHistoryMapper       = subsystemHistoryMapper;
-        this.objectMapper                 = objectMapper;
+        this.tbNodeHistoryMapper = tbNodeHistoryMapper;
+        this.subsystemHistoryMapper = subsystemHistoryMapper;
+        this.objectMapper = objectMapper;
     }
 
     public LeidenInputDto toLeidenInput(String analysisTime,
-                                        SubsystemAlgorithmParams params) {
+            SubsystemAlgorithmParams params) {
         ApplicationMetadata meta = resolveMetadata(null, null, analysisTime);
         Long resolvedId = meta.applicationId();
         String resolvedKey = meta.applicationKey();
@@ -96,20 +97,19 @@ public class SubsystemDiscoveryService {
                 weightedGraph.getNodes().stream().map(node -> node.getId()).toList(),
                 weightedGraph.getEdges().stream()
                         .map(edge -> new LeidenInputEdgeDto(edge.getSource(), edge.getTarget(), edge.getWeight()))
-                        .toList()
-        );
+                        .toList());
     }
 
     @Transactional
     public SubsystemDiscoveryResponse discover(String analysisTime,
-                                               SubsystemAlgorithmParams params) {
+            SubsystemAlgorithmParams params) {
         ApplicationMetadata meta = resolveMetadata(null, null, analysisTime);
         Long resolvedId = meta.applicationId();
         String resolvedKey = meta.applicationKey();
 
-        int    runs               = params.runsOrDefault();
+        int runs = params.runsOrDefault();
         double consensusThreshold = params.consensusThresholdOrDefault();
-        double resolution         = params.resolutionOrDefault();
+        double resolution = params.resolutionOrDefault();
 
         // 1. Check if a run matching the parameters already exists in the database
         SubsystemRunMaster existingMaster = subsystemHistoryMapper.selectMasterByConfig(
@@ -122,43 +122,41 @@ public class SubsystemDiscoveryService {
                     SubsystemPersistenceDto persisted = objectMapper.readValue(
                             cachedResult, SubsystemPersistenceDto.class);
 
-                    int totalNodes = persisted.subsystems().stream()
-                            .mapToInt(SubsystemDto::nodeCount)
-                            .sum();
-                    int totalEdges = persisted.subsystems().stream()
-                            .mapToInt(SubsystemDto::edgeCount)
-                            .sum()
-                            + persisted.subsystemLinks().stream()
-                            .mapToInt(SubsystemLinkDto::edgeCount)
-                            .sum();
+                    if (persisted.nodeAssignments() != null && !persisted.nodeAssignments().isEmpty()) {
+                        int totalNodes = persisted.subsystems().stream()
+                                .mapToInt(SubsystemDto::nodeCount)
+                                .sum();
+                        int totalEdges = persisted.subsystems().stream()
+                                .mapToInt(SubsystemDto::edgeCount)
+                                .sum()
+                                + persisted.subsystemLinks().stream()
+                                        .mapToInt(SubsystemLinkDto::edgeCount)
+                                        .sum();
 
-                    SummaryDto summary = new SummaryDto(
-                            totalNodes,
-                            totalEdges,
-                            existingMaster.getTotalSubsystems(),
-                            existingMaster.getAvgStabilityScore()
-                    );
+                        SummaryDto summary = new SummaryDto(
+                                totalNodes,
+                                totalEdges,
+                                existingMaster.getTotalSubsystems(),
+                                existingMaster.getAvgStabilityScore());
 
-                    AlgorithmInfoDto algorithm = new AlgorithmInfoDto(
-                            "Leiden (Java)",
-                            existingMaster.getRuns(),
-                            existingMaster.getConsensusThreshold(),
-                            existingMaster.getResolution(),
-                            WEIGHTING_VERSION
-                    );
+                        AlgorithmInfoDto algorithm = new AlgorithmInfoDto(
+                                "Leiden (Java)",
+                                existingMaster.getRuns(),
+                                existingMaster.getConsensusThreshold(),
+                                existingMaster.getResolution(),
+                                WEIGHTING_VERSION);
 
-                    // Reconstruct response with active run ID — include nodeAssignments for
-                    // boundary analysis (null for legacy rows that pre-date v2 persistence).
-                    return new SubsystemDiscoveryResponse(
-                            existingMaster.getDiscoveryRunId(),
-                            resolvedId,
-                            resolvedKey,
-                            algorithm,
-                            summary,
-                            persisted.subsystems(),
-                            persisted.subsystemLinks(),
-                            persisted.nodeAssignments()
-                    );
+                        // Reconstruct response with active run ID just to ensure consistency
+                        return new SubsystemDiscoveryResponse(
+                                existingMaster.getDiscoveryRunId(),
+                                resolvedId,
+                                resolvedKey,
+                                algorithm,
+                                summary,
+                                persisted.subsystems(),
+                                persisted.subsystemLinks(),
+                                persisted.nodeAssignments());
+                    }
                 } catch (Exception e) {
                     // Fall back to executing Leiden if deserialization fails
                 }
@@ -167,8 +165,8 @@ public class SubsystemDiscoveryService {
 
         LocalDateTime startedAt = LocalDateTime.now(ZoneId.systemDefault());
 
-        List<RawGraphDto> rawGraphs   = collectGraphs(resolvedId, analysisTime, resolvedKey, params);
-        WeightedGraph weightedGraph   = weightedGraphBuilder.build(rawGraphs);
+        List<RawGraphDto> rawGraphs = collectGraphs(resolvedId, analysisTime, resolvedKey, params);
+        WeightedGraph weightedGraph = weightedGraphBuilder.build(rawGraphs);
         if (weightedGraph.getNodes().isEmpty()) {
             throw new IllegalStateException("Cannot discover subsystems from an empty graph");
         }
@@ -195,11 +193,10 @@ public class SubsystemDiscoveryService {
                 resolvedKey,
                 new AlgorithmInfoDto("Leiden (Java)", runs, consensusThreshold, resolution, WEIGHTING_VERSION),
                 new SummaryDto(weightedGraph.getNodes().size(), weightedGraph.getEdges().size(),
-                                subsystems.size(), round(averageStability)),
+                        subsystems.size(), round(averageStability)),
                 subsystems,
                 aggregation.getSubsystemLinks(),
-                aggregation.getNodeAssignments()
-        );
+                aggregation.getNodeAssignments());
 
         // Persist the new run results to database
         try {
@@ -212,8 +209,6 @@ public class SubsystemDiscoveryService {
             master.setCompletedAt(completedAt);
             master.setTotalSubsystems(subsystems.size());
             master.setAvgStabilityScore(round(averageStability));
-            // Persist subsystems, links, and nodeAssignments so that boundary analysis
-            // can work from an existing discoveryRunId without re-running Leiden.
             SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                     response.subsystems(), response.subsystemLinks(), response.nodeAssignments());
             master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
@@ -233,8 +228,7 @@ public class SubsystemDiscoveryService {
                     response.summary(),
                     response.subsystems(),
                     response.subsystemLinks(),
-                    response.nodeAssignments()
-            );
+                    response.nodeAssignments());
 
         } catch (Exception e) {
             throw new IllegalStateException("Failed to persist discovery run results to the database", e);
@@ -245,14 +239,14 @@ public class SubsystemDiscoveryService {
 
     @Transactional
     public LlmDiscoveryResponse discoverWithLlm(String analysisTime,
-                                                SubsystemAlgorithmParams params) {
+            SubsystemAlgorithmParams params) {
         ApplicationMetadata meta = resolveMetadata(null, null, analysisTime);
         Long resolvedId = meta.applicationId();
         String resolvedKey = meta.applicationKey();
 
-        int    runs               = params.runsOrDefault();
+        int runs = params.runsOrDefault();
         double consensusThreshold = params.consensusThresholdOrDefault();
-        double resolution         = params.resolutionOrDefault();
+        double resolution = params.resolutionOrDefault();
 
         String modelId = params.llmModel() != null ? params.llmModel() : "43";
         SummaryType resolvedSummaryType = params.summaryTypeOrDefault();
@@ -265,7 +259,8 @@ public class SubsystemDiscoveryService {
         if (master == null) {
             // Run Leiden to create a new master run
             discover(analysisTime, params);
-            // After discover(), a row is inserted in tb_gi_subsystems_history. Let's load it.
+            // After discover(), a row is inserted in tb_gi_subsystems_history. Let's load
+            // it.
             master = subsystemHistoryMapper.selectMasterByConfig(
                     analysisTime, runs, consensusThreshold, resolution);
             if (master == null) {
@@ -282,7 +277,8 @@ public class SubsystemDiscoveryService {
             }
             persisted = objectMapper.readValue(cachedResult, SubsystemPersistenceDto.class);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to deserialize discovery result for run ID: " + master.getDiscoveryRunId(), e);
+            throw new IllegalStateException(
+                    "Failed to deserialize discovery result for run ID: " + master.getDiscoveryRunId(), e);
         }
 
         // 3. Convert to LlmSummaryInput
@@ -290,8 +286,7 @@ public class SubsystemDiscoveryService {
                 master.getTotalSubsystems(),
                 master.getAvgStabilityScore(),
                 persisted.subsystems(),
-                persisted.subsystemLinks()
-        );
+                persisted.subsystemLinks());
 
         // 4. Check if matching summary already exists
         String cachedSummary = subsystemHistoryMapper.selectLlmSummaryByConfig(
@@ -304,8 +299,7 @@ public class SubsystemDiscoveryService {
                         master.getDiscoveryRunId(),
                         modelId,
                         summaryTypeStr,
-                        cachedSummary
-                );
+                        cachedSummary);
             } catch (Exception e) {
                 throw new IllegalStateException("Failed to persist LLM architectural summary to the database", e);
             }
@@ -319,23 +313,21 @@ public class SubsystemDiscoveryService {
                 .mapToInt(SubsystemDto::edgeCount)
                 .sum()
                 + persisted.subsystemLinks().stream()
-                .mapToInt(SubsystemLinkDto::edgeCount)
-                .sum();
+                        .mapToInt(SubsystemLinkDto::edgeCount)
+                        .sum();
 
         SummaryDto summary = new SummaryDto(
                 totalNodes,
                 totalEdges,
                 master.getTotalSubsystems(),
-                master.getAvgStabilityScore()
-        );
+                master.getAvgStabilityScore());
 
         AlgorithmInfoDto algorithm = new AlgorithmInfoDto(
                 "Leiden (Java)",
                 master.getRuns(),
                 master.getConsensusThreshold(),
                 master.getResolution(),
-                WEIGHTING_VERSION
-        );
+                WEIGHTING_VERSION);
 
         return new LlmDiscoveryResponse(
                 master.getDiscoveryRunId(),
@@ -347,8 +339,7 @@ public class SubsystemDiscoveryService {
                 persisted.subsystems(),
                 persisted.subsystemLinks(),
                 persisted.nodeAssignments(),
-                cachedSummary
-        );
+                cachedSummary);
     }
 
     @Transactional
@@ -391,8 +382,7 @@ public class SubsystemDiscoveryService {
                 master.getTotalSubsystems(),
                 master.getAvgStabilityScore(),
                 persisted.subsystems(),
-                persisted.subsystemLinks()
-        );
+                persisted.subsystemLinks());
 
         // 5. Generate summary
         cachedSummary = llmSubsystemDiscoveryService.summarise(llmInput, resolvedSummaryType, modelId);
@@ -401,8 +391,7 @@ public class SubsystemDiscoveryService {
                     discoveryRunId,
                     modelId,
                     summaryTypeStr,
-                    cachedSummary
-            );
+                    cachedSummary);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to persist LLM architectural summary to the database", e);
         }
@@ -430,16 +419,26 @@ public class SubsystemDiscoveryService {
     }
 
     private List<RawGraphDto> collectGraphs(Long applicationId,
-                                            String analysisTime,
-                                            String applicationKey,
-                                            SubsystemAlgorithmParams params) {
+            String analysisTime,
+            String applicationKey,
+            SubsystemAlgorithmParams params) {
         return graphExtractionService.extract(
                 applicationId,
                 analysisTime,
                 applicationKey,
                 params.graphTypes(),
-                params.graphs()
-        );
+                params.graphs());
+    }
+
+    /**
+     * Builds the weighted graph for a given analysis time and params.
+     * Used by boundary node detection to access the raw edge list
+     * without re-running Leiden.
+     */
+    public WeightedGraph buildWeightedGraph(String analysisTime, SubsystemAlgorithmParams params) {
+        ApplicationMetadata meta = resolveMetadata(null, null, analysisTime);
+        List<RawGraphDto> rawGraphs = collectGraphs(meta.applicationId(), analysisTime, meta.applicationKey(), params);
+        return weightedGraphBuilder.build(rawGraphs);
     }
 
     private SubsystemDto toSubsystemDto(SubsystemDraft draft) {
@@ -455,8 +454,7 @@ public class SubsystemDiscoveryService {
                 draft.getTopPackages(),
                 draft.getCentralNodes(),
                 draft.getApiEndpoints(),
-                draft.getRelationSummary() == null ? java.util.Map.of() : draft.getRelationSummary()
-        );
+                draft.getRelationSummary() == null ? java.util.Map.of() : draft.getRelationSummary());
     }
 
     private static double round(double value) {
