@@ -102,10 +102,12 @@ public class BoundaryNodeServiceImpl implements BoundaryNodeService {
         // 4. Build the weighted graph to access the edge list
         WeightedGraph graph = discoveryService.buildWeightedGraph(analysisTime, params);
 
-        // 5. Build node name lookup from graph nodes — O(N)
+        // 5. Build node name & type lookup from graph nodes — O(N)
         Map<Long, String> nodeNames = new HashMap<>(graph.getNodes().size());
+        Map<Long, String> nodeTypes = new HashMap<>(graph.getNodes().size());
         for (GraphNode node : graph.getNodes()) {
             nodeNames.put(node.getId(), node.getName());
+            nodeTypes.put(node.getId(), node.getType());
         }
 
         // 6. Single-pass edge scan — O(E)
@@ -149,6 +151,7 @@ public class BoundaryNodeServiceImpl implements BoundaryNodeService {
             rawNodes.add(new RawBoundaryNode(
                     acc.nodeId,
                     nodeNames.getOrDefault(acc.nodeId, "node-" + acc.nodeId),
+                    nodeTypes.getOrDefault(acc.nodeId, "CLASS"),
                     subsystemId,
                     subsystemNames.getOrDefault(subsystemId, subsystemId),
                     acc.connectedSubsystems,
@@ -174,9 +177,18 @@ public class BoundaryNodeServiceImpl implements BoundaryNodeService {
         }
         comparator = comparator.thenComparing(BoundaryNodeDto::nodeName);
 
-        List<BoundaryNodeDto> scoredNodes = rawNodes.stream()
+        // Filter by requested node type if specified
+        String filterType = request.nodeType();
+        List<RawBoundaryNode> filteredRawNodes = rawNodes;
+        if (filterType != null && !filterType.trim().isEmpty() && !"ALL".equalsIgnoreCase(filterType)) {
+            filteredRawNodes = rawNodes.stream()
+                    .filter(n -> filterType.equalsIgnoreCase(n.nodeType))
+                    .toList();
+        }
+
+        List<BoundaryNodeDto> scoredNodes = filteredRawNodes.stream()
                 .map(raw -> new BoundaryNodeDto(
-                        raw.nodeId, raw.nodeName, raw.subsystemId, raw.subsystemName,
+                        raw.nodeId, raw.nodeName, raw.nodeType, raw.subsystemId, raw.subsystemName,
                         raw.connectedSubsystems.stream()
                                 .map(id -> subsystemNames.getOrDefault(id, id))
                                 .sorted()
@@ -256,7 +268,7 @@ public class BoundaryNodeServiceImpl implements BoundaryNodeService {
      * the immutable {@link BoundaryNodeDto} record twice.
      */
     private record RawBoundaryNode(
-            Long nodeId, String nodeName,
+            Long nodeId, String nodeName, String nodeType,
             String subsystemId, String subsystemName,
             Set<String> connectedSubsystems,
             int crossEdgeCount, int incomingCross, int outgoingCross,

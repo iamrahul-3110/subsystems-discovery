@@ -3,6 +3,7 @@
     <article
       class="summary-panel full-width-summary"
       :class="{ 'collapsed': isCollapsed, 'discovery-collapsed': isDiscoveryCollapsed }"
+      :style="{ height: height }"
     >
       <div class="panel-heading">
         <div>
@@ -42,7 +43,8 @@ defineProps({
   formattedSummaryHtml: { type: String, default: '' },
   actualModelDisplay: { type: String, default: '' },
   isCollapsed: { type: Boolean, default: false },
-  isDiscoveryCollapsed: { type: Boolean, default: false }
+  isDiscoveryCollapsed: { type: Boolean, default: false },
+  height: { type: String, default: null }
 })
 
 defineEmits(['toggle-collapse'])

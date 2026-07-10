@@ -96,18 +96,6 @@
       ></div>
       <div v-else class="diagram-placeholder">Diagram will render after discovery.</div>
     </div>
-
-    <!-- Merged Selected Cluster Details -->
-    <div class="selected-cluster-sidebar-card">
-      <p class="eyebrow">Selected Cluster</p>
-      <h3>{{ selectedCluster?.name || 'Select a subsystem' }}</h3>
-      <p class="selected-cluster-desc">{{ selectedCluster?.description || 'Expand or select a cluster to inspect its role.' }}</p>
-      <div v-if="selectedCluster" class="detail-stats">
-        <span>{{ formatNumber(selectedCluster.nodeCount) }} nodes</span>
-        <span>{{ formatNumber(selectedCluster.edgeCount) }} internal edges</span>
-        <span>{{ selectedCluster.centralNodes?.length || 0 }} representative nodes</span>
-      </div>
-    </div>
   </section>
 </template>
 
@@ -146,12 +134,11 @@ const dragStart = reactive({ x: 0, y: 0 })
 
 const outputStyle = computed(() => {
   return {
-    transform: `translate(${pan.x}px, ${pan.y}px)`,
+    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom.value})`,
+    transformOrigin: 'center center',
     transition: isDragging.value ? 'none' : 'transform 0.1s ease-out',
     display: 'inline-block',
-    userSelect: 'none',
-    width: `${Math.round(zoom.value * 100)}%`,
-    height: 'auto'
+    userSelect: 'none'
   }
 })
 

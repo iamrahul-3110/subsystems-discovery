@@ -13,10 +13,7 @@ public interface SubsystemHistoryMapper {
      */
     void insertDiscovery(SubsystemRunMaster master);
 
-    /**
-     * Retrieves the serialised discovery result JSON for a given run.
-     */
-    String selectHistoryResult(@Param("discoveryRunId") Long discoveryRunId);
+
 
     /**
      * Finds the most recent run that matches the given algorithm configuration.

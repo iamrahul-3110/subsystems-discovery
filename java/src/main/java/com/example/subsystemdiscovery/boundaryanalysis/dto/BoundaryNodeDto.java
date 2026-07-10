@@ -11,6 +11,7 @@ import java.util.List;
 public record BoundaryNodeDto(
         Long nodeId,
         String nodeName,
+        String nodeType,
         String subsystemId,
         String subsystemName,
         List<String> connectedSubsystems,

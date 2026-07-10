@@ -11,6 +11,7 @@ import com.example.subsystemdiscovery.llm.LlmProvider;
 import com.example.subsystemdiscovery.llm.LlmProviderFactory;
 import com.example.subsystemdiscovery.visualization.MermaidGenerator;
 import com.example.subsystemdiscovery.discovery.SubsystemDiscoveryService;
+import com.example.subsystemdiscovery.discovery.ZipUtils;
 import com.example.subsystemdiscovery.visualization.SummaryFormatterService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -178,13 +179,15 @@ public class PocController {
     public ResponseEntity<?> getMermaidDiagram(@RequestParam Long discoveryRunId) {
         log.info("Request received to generate Mermaid diagram for discoveryRunId={}", discoveryRunId);
         try {
-            String cached = historyMapper.selectHistoryResult(discoveryRunId);
-            if (!StringUtils.hasText(cached)) {
+            com.example.subsystemdiscovery.repository.entity.SubsystemRunMaster master = historyMapper.selectMasterById(discoveryRunId);
+            byte[] cached = (master != null) ? master.getDiscoveryResult() : null;
+            if (cached == null || cached.length == 0) {
                 log.warn("No discovery result found in history cache for discoveryRunId={}", discoveryRunId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("error", "No discovery result found for discoveryRunId=" + discoveryRunId));
             }
-            SubsystemDiscoveryResponse response = objectMapper.readValue(cached, SubsystemDiscoveryResponse.class);
+            String unzipped = ZipUtils.unzipString(cached);
+            SubsystemDiscoveryResponse response = objectMapper.readValue(unzipped, SubsystemDiscoveryResponse.class);
             log.info("Loaded cached discovery result for application '{}' (discoveryRunId={})", response.applicationKey(), discoveryRunId);
             return ResponseEntity.ok(mermaidGenerator.generate(response.subsystemLinks(), response.subsystems()));
         } catch (Exception e) {

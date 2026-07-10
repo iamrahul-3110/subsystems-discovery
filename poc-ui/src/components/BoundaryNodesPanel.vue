@@ -11,7 +11,7 @@
 
     <div v-else class="boundary-content animate-fade-in">
       <!-- Summary Metrics Grid -->
-      <section class="metrics-grid" style="margin-bottom: 24px;">
+      <section class="metrics-grid" style="margin-bottom: 20px;">
         <article>
           <span>Total Boundary Nodes</span>
           <strong>{{ formatNumber(boundaryData.overview.totalBoundaryNodes) }}</strong>
@@ -26,49 +26,9 @@
         </article>
         <article>
           <span>Max Boundary Score</span>
-          <strong style="color: #6366f1;">{{ boundaryData.overview.maximumBoundaryScore.toFixed(3) }}</strong>
+          <strong style="color: #2563eb;">{{ boundaryData.overview.maximumBoundaryScore.toFixed(3) }}</strong>
         </article>
       </section>
-
-      <!-- Critical Nodes & Overview Row -->
-      <div class="boundary-dashboard-row">
-        <!-- Top Critical Nodes list -->
-        <div class="dashboard-card critical-nodes-card">
-          <h3>Top Critical Boundary Nodes</h3>
-          <p class="card-desc">Nodes with the highest cross-subsystem impact and connectivity.</p>
-          <div class="critical-nodes-list">
-            <div 
-              v-for="(nodeName, idx) in boundaryData.overview.topCriticalBoundaryNodes" 
-              :key="idx" 
-              class="critical-node-item"
-            >
-              <span class="critical-node-rank">{{ idx + 1 }}</span>
-              <span class="critical-node-name" :title="nodeName">{{ nodeName }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Description / Insight Card -->
-        <div class="dashboard-card insights-card">
-          <h3>Boundary Nodes Insight</h3>
-          <p class="card-desc">What are boundary nodes?</p>
-          <div class="insight-content">
-            <p>
-              Boundary nodes represent the coupling surface between subsystems. They act as the entry and exit points for service communication.
-            </p>
-            <div class="insight-tips">
-              <div class="insight-tip-item">
-                <span class="tip-dot" style="background: #ef4444;"></span>
-                <span><strong>High-risk endpoints</strong>: High boundary scores indicate critical interfaces.</span>
-              </div>
-              <div class="insight-tip-item">
-                <span class="tip-dot" style="background: #2563eb;"></span>
-                <span><strong>Refactoring Candidates</strong>: Ideal boundaries for microservice extraction.</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- Top Boundary Nodes Table -->
       <div class="dashboard-card table-card">
@@ -95,6 +55,19 @@
               </select>
             </div>
             <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 0.05em;">NODE TYPE</label>
+              <select 
+                :value="nodeType" 
+                @change="$emit('update:nodeType', $event.target.value)"
+                style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; background: #fff; cursor: pointer; min-width: 130px; color: #1e293b; font-weight: 500; outline: none;"
+              >
+                <option value="ALL">All Node Types</option>
+                <option value="PACKAGE">Packages Only</option>
+                <option value="CLASS">Classes Only</option>
+                <option value="METHOD">Methods Only</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
               <label style="font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 0.05em;">LIMIT</label>
               <select 
                 :value="nodeLimit" 
@@ -117,24 +90,41 @@
                 <th>Node Identifier</th>
                 <th>Subsystem</th>
                 <th>Connected Subsystems</th>
-                <th class="num-col">Outgoing Edges</th>
-                <th class="num-col">Incoming Edges</th>
-                <th class="num-col">Total Edges</th>
-                <th style="width: 180px;">Boundary Score</th>
+                <th class="num-col">
+                  Outgoing Edges
+                  <span class="header-info-trigger" title="Number of outgoing dependencies pointing to nodes in other subsystems">i</span>
+                </th>
+                <th class="num-col">
+                  Incoming Edges
+                  <span class="header-info-trigger" title="Number of incoming dependencies originating from other subsystems">i</span>
+                </th>
+                <th class="num-col">
+                  Total Edges
+                  <span class="header-info-trigger" title="Combined incoming and outgoing cross-subsystem dependencies">i</span>
+                </th>
+                <th style="width: 200px;">
+                  Boundary Score
+                  <span class="header-info-trigger" title="Normalized score representing the degree of participation on subsystem boundaries (1.0 = maximum cross-coupling)">i</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="node in boundaryData.boundaryNodes" :key="node.nodeId">
                 <td class="node-cell">
                   <div class="node-name-wrapper" :title="node.nodeName">
-                    <span class="node-icon">⚡</span>
-                    <strong class="node-name">{{ node.nodeName }}</strong>
+                    <span class="node-icon" v-if="node.nodeType === 'PACKAGE'" title="Package">📦</span>
+                    <span class="node-icon" v-else-if="node.nodeType === 'METHOD'" title="Method">⚙️</span>
+                    <span class="node-icon" v-else title="Class">🧩</span>
+                    <div style="display: flex; flex-direction: column; min-width: 0;">
+                      <strong class="node-name" style="font-size: 13.5px; line-height: 1.2;">{{ node.nodeName }}</strong>
+                      <span class="node-type-label" style="font-size: 9px; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px;">{{ node.nodeType }}</span>
+                    </div>
                   </div>
                 </td>
                 <td>
                   <span class="subsystem-badge self-subsystem">
                     {{ node.subsystemName }}
-                    <small>{{ node.subsystemId }}</small>
+                    <small>ID: {{ node.subsystemId }}</small>
                   </span>
                 </td>
                 <td>
@@ -149,9 +139,9 @@
                     </span>
                   </div>
                 </td>
-                <td class="num-col">{{ formatNumber(node.outgoingCrossEdges) }}</td>
-                <td class="num-col">{{ formatNumber(node.incomingCrossEdges) }}</td>
-                <td class="num-col font-medium">{{ formatNumber(node.crossSubsystemEdgeCount) }}</td>
+                <td class="num-col font-mono">{{ formatNumber(node.outgoingCrossEdges) }}</td>
+                <td class="num-col font-mono">{{ formatNumber(node.incomingCrossEdges) }}</td>
+                <td class="num-col font-medium font-mono">{{ formatNumber(node.crossSubsystemEdgeCount) }}</td>
                 <td>
                   <div class="score-cell">
                     <div class="score-bar-bg">
@@ -160,7 +150,7 @@
                         :style="{ width: (node.boundaryScore * 100) + '%' }"
                       ></div>
                     </div>
-                    <span class="score-val">{{ node.boundaryScore.toFixed(3) }}</span>
+                    <span class="score-val font-mono">{{ node.boundaryScore.toFixed(3) }}</span>
                   </div>
                 </td>
               </tr>
@@ -177,10 +167,11 @@ defineProps({
   boundaryData: { type: Object, default: null },
   loading: { type: Boolean, default: false },
   nodeLimit: { type: Number, default: 20 },
-  sortOrder: { type: String, default: 'TOP' }
+  sortOrder: { type: String, default: 'TOP' },
+  nodeType: { type: String, default: 'ALL' }
 })
 
-defineEmits(['update:nodeLimit', 'update:sortOrder'])
+defineEmits(['update:nodeLimit', 'update:sortOrder', 'update:nodeType'])
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === '') return '-'
@@ -224,13 +215,6 @@ function formatNumber(value) {
   border-radius: 8px;
 }
 
-.boundary-dashboard-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  margin-bottom: 24px;
-}
-
 .dashboard-card {
   background: #ffffff;
   border: 1px solid #cbd5e1;
@@ -252,84 +236,20 @@ function formatNumber(value) {
   margin: 0 0 16px;
 }
 
-.critical-nodes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.critical-node-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: #f8fafc;
-  border-left: 3px solid #ef4444;
-  border-radius: 0 6px 6px 0;
-  font-size: 13px;
-}
-
-.critical-node-rank {
-  font-weight: 700;
-  color: #ef4444;
-  background: #fee2e2;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-}
-
-.critical-node-name {
-  font-weight: 600;
-  color: #334155;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.insight-content {
-  font-size: 13px;
-  color: #334155;
-  line-height: 1.5;
-}
-
-.insight-tips {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.insight-tip-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: 12.5px;
-}
-
-.tip-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-top: 5px;
-  flex-shrink: 0;
-}
-
 .table-card {
   padding: 0;
   overflow: hidden;
 }
 
 .card-header {
-  padding: 20px 20px 0;
+  padding: 20px 20px 16px;
 }
 
 .table-wrapper {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 310px); /* Constrain height dynamically to viewport height */
+  min-height: 200px;
   border-top: 1px solid #e2e8f0;
 }
 
@@ -341,14 +261,18 @@ function formatNumber(value) {
 }
 
 .boundary-table th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   background: #f8fafc;
-  padding: 12px 16px;
-  font-weight: 600;
+  padding: 14px 16px;
+  font-weight: 700;
   color: #475569;
-  font-size: 12px;
+  font-size: 11.5px;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-bottom: 1px solid #e2e8f0;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid #cbd5e1;
+  box-shadow: inset 0 -1px 0 #cbd5e1;
 }
 
 .boundary-table td {
@@ -358,7 +282,7 @@ function formatNumber(value) {
 }
 
 .boundary-table tr:hover {
-  background: #f8fafc;
+  background: rgba(37, 99, 235, 0.025);
 }
 
 .num-col {
@@ -367,6 +291,11 @@ function formatNumber(value) {
 
 .font-medium {
   font-weight: 600;
+}
+
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
 }
 
 .node-cell {
@@ -397,7 +326,7 @@ function formatNumber(value) {
   padding: 6px 10px;
   border-radius: 6px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.15;
   max-width: 180px;
   white-space: nowrap;
@@ -414,7 +343,7 @@ function formatNumber(value) {
 .self-subsystem small {
   color: #3b82f6;
   font-weight: 500;
-  font-size: 10px;
+  font-size: 9.5px;
 }
 
 .connected-subsystems-list {
@@ -430,7 +359,7 @@ function formatNumber(value) {
   border: 1px solid #e5e7eb;
   padding: 4px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .score-cell {
@@ -450,7 +379,7 @@ function formatNumber(value) {
 
 .score-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #6366f1);
+  background: linear-gradient(90deg, #2563eb, #6366f1);
   border-radius: 4px;
 }
 
@@ -459,6 +388,29 @@ function formatNumber(value) {
   color: #334155;
   font-variant-numeric: tabular-nums;
   width: 42px;
+}
+
+.header-info-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 5px;
+  cursor: help;
+  transition: all 0.15s ease;
+  vertical-align: middle;
+  text-transform: none;
+}
+
+.header-info-trigger:hover {
+  background: #cbd5e1;
+  color: #0f172a;
 }
 
 .animate-fade-in {

@@ -92,13 +92,6 @@
          LIMIT 1
      </select>
 
-    <select id="selectHistoryResult"
-            resultType="string">
-        SELECT discovery_result
-          FROM tb_gi_subsystems_history
-         WHERE discovery_run_id = #{discoveryRunId}
-         LIMIT 1
-    </select>
 
     <select id="selectLlmSummaryByConfig"
             resultType="string">

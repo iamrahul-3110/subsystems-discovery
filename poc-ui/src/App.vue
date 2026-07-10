@@ -103,7 +103,7 @@
             </button>
           </div>
 
-          <div v-show="currentTab === 'discovery'">
+          <div v-show="currentTab === 'discovery'" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
             <div class="workspace-section-header">
               <h2>Cluster Tree Subsystems and associated nodes graph</h2>
               <button
@@ -125,8 +125,10 @@
               class="discovery-grid"
               :class="{
                 'collapsed': isDiscoveryCollapsed,
-                'summary-collapsed': isSummaryCollapsed
+                'summary-collapsed': isSummaryCollapsed,
+                'resizing-active': isVerticalResizing
               }"
+              :style="{ height: gridHeight + 'px' }"
               ref="resizerContainerRef"
             >
               <ClusterTree
@@ -155,7 +157,17 @@
               />
             </section>
 
+            <div 
+              v-if="!isDiscoveryCollapsed && !isSummaryCollapsed"
+              class="vertical-panel-resizer" 
+              :class="{ resizing: isVerticalResizing }" 
+              @mousedown="onVerticalResizerMouseDown"
+            >
+              <div class="vertical-resizer-line"></div>
+            </div>
+
             <ArchitectureSummary
+              :height="summaryHeight"
               :summaryText="summaryText"
               :formattedSummaryHtml="formattedSummaryHtml"
               :actualModelDisplay="actualModelDisplay"
@@ -165,14 +177,16 @@
             />
           </div>
 
-          <div v-show="currentTab === 'boundary'">
+          <div v-show="currentTab === 'boundary'" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
             <BoundaryNodesPanel 
               :boundaryData="boundaryData"
               :loading="loadingBoundary"
               :nodeLimit="boundaryNodeLimit"
               :sortOrder="boundarySortOrder"
+              :nodeType="boundaryNodeType"
               @update:nodeLimit="boundaryNodeLimit = $event"
               @update:sortOrder="boundarySortOrder = $event"
+              @update:nodeType="boundaryNodeType = $event"
             />
           </div>
         </template>
@@ -182,7 +196,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import mermaid from 'mermaid'
 
@@ -201,11 +215,26 @@ const isSummaryCollapsed = ref(false)
 const currentTab = ref('discovery')
 const boundaryData = ref(null)
 const loadingBoundary = ref(false)
+const gridHeight = ref(450)
+const isVerticalResizing = ref(false)
+const windowHeight = ref(window.innerHeight)
+
+const totalAvailableHeight = computed(() => {
+  return Math.max(400, windowHeight.value - 380)
+})
+
+const summaryHeight = computed(() => {
+  if (isDiscoveryCollapsed.value || isSummaryCollapsed.value) {
+    return null
+  }
+  return `${totalAvailableHeight.value - gridHeight.value}px`
+})
 
 mermaid.initialize({
   startOnLoad: false,
   theme: 'base',
   securityLevel: 'loose',
+  maxTextSize: 1000000,
   flowchart: {
     htmlLabels: true,
     curve: 'basis'
@@ -508,6 +537,56 @@ function onResizerMouseUp() {
   document.body.classList.remove('resizing-active')
 }
 
+function onVerticalResizerMouseDown(e) {
+  e.preventDefault()
+  isVerticalResizing.value = true
+  document.addEventListener('mousemove', onVerticalResizerMouseMove)
+  document.addEventListener('mouseup', onVerticalResizerMouseUp)
+  document.body.style.cursor = 'row-resize'
+  document.body.classList.add('resizing-active')
+}
+
+function onVerticalResizerMouseMove(e) {
+  if (!isVerticalResizing.value || !resizerContainerRef.value) return
+  const containerRect = resizerContainerRef.value.getBoundingClientRect()
+  const relativeY = e.clientY - containerRect.top
+  const minGrid = 200
+  const maxGrid = Math.max(300, totalAvailableHeight.value - 120)
+  gridHeight.value = Math.max(minGrid, Math.min(maxGrid, relativeY))
+}
+
+function onVerticalResizerMouseUp() {
+  isVerticalResizing.value = false
+  document.removeEventListener('mousemove', onVerticalResizerMouseMove)
+  document.removeEventListener('mouseup', onVerticalResizerMouseUp)
+  document.body.style.cursor = ''
+  document.body.classList.remove('resizing-active')
+}
+
+function handleWindowResize() {
+  windowHeight.value = window.innerHeight
+  const minGrid = 200
+  const maxGrid = Math.max(300, totalAvailableHeight.value - 120)
+  
+  if (gridHeight.value > maxGrid) {
+    gridHeight.value = maxGrid
+  }
+  if (gridHeight.value < minGrid) {
+    gridHeight.value = minGrid
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleWindowResize)
+  // Set initial grid height to 60% of available height
+  gridHeight.value = Math.max(300, Math.min(750, Math.round(totalAvailableHeight.value * 0.6)))
+  handleWindowResize()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleWindowResize)
+})
+
 function buildMermaidGraph() {
   const clusters = sortedSubsystems.value.filter(sub => selectedMermaidSubsystems.has(sub.id)).slice(0, 18)
   const clusterIds = new Set(clusters.map((cluster) => cluster.id))
@@ -703,8 +782,9 @@ function handleError(error, fallback) {
 
 const boundaryNodeLimit = ref(20)
 const boundarySortOrder = ref('TOP')
+const boundaryNodeType = ref('ALL')
 
-watch([boundaryNodeLimit, boundarySortOrder], () => {
+watch([boundaryNodeLimit, boundarySortOrder, boundaryNodeType], () => {
   fetchBoundaryNodes()
 })
 
@@ -717,7 +797,8 @@ async function fetchBoundaryNodes() {
       {
         discoveryRunId: discovery.value.discoveryRunId,
         nodeLimit: boundaryNodeLimit.value,
-        sortOrder: boundarySortOrder.value
+        sortOrder: boundarySortOrder.value,
+        nodeType: boundaryNodeType.value
       }
     )
     boundaryData.value = response.data

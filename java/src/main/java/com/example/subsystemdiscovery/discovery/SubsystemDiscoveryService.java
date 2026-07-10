@@ -116,9 +116,10 @@ public class SubsystemDiscoveryService {
                 analysisTime, runs, consensusThreshold, resolution);
 
         if (existingMaster != null) {
-            String cachedResult = subsystemHistoryMapper.selectHistoryResult(existingMaster.getDiscoveryRunId());
-            if (StringUtils.hasText(cachedResult)) {
+            byte[] cachedResultBytes = existingMaster.getDiscoveryResult();
+            if (cachedResultBytes != null && cachedResultBytes.length > 0) {
                 try {
+                    String cachedResult = ZipUtils.unzipString(cachedResultBytes);
                     SubsystemPersistenceDto persisted = objectMapper.readValue(
                             cachedResult, SubsystemPersistenceDto.class);
 
@@ -211,7 +212,13 @@ public class SubsystemDiscoveryService {
             master.setAvgStabilityScore(round(averageStability));
             SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                     response.subsystems(), response.subsystemLinks(), response.nodeAssignments());
-            master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
+            try {
+                String jsonStr = objectMapper.writeValueAsString(persistenceDto);
+                byte[] zipped = ZipUtils.zipString(jsonStr, "result.json");
+                master.setDiscoveryResult(zipped);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("Failed to zip discoveryResult JSON", e);
+            }
             master.setCreatedByEnvelope("dummy-envelope".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             master.setCreatedByHash("dummy-hash".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
@@ -271,11 +278,18 @@ public class SubsystemDiscoveryService {
         // 2. Deserialize discovery result
         SubsystemPersistenceDto persisted;
         try {
-            String cachedResult = master.getDiscoveryResult();
-            if (!StringUtils.hasText(cachedResult)) {
-                cachedResult = subsystemHistoryMapper.selectHistoryResult(master.getDiscoveryRunId());
+            byte[] cachedResult = master.getDiscoveryResult();
+            if (cachedResult == null || cachedResult.length == 0) {
+                SubsystemRunMaster fullMaster = subsystemHistoryMapper.selectMasterById(master.getDiscoveryRunId());
+                if (fullMaster != null) {
+                    cachedResult = fullMaster.getDiscoveryResult();
+                }
             }
-            persisted = objectMapper.readValue(cachedResult, SubsystemPersistenceDto.class);
+            if (cachedResult == null || cachedResult.length == 0) {
+                throw new IllegalStateException("No discovery result data found for run ID: " + master.getDiscoveryRunId());
+            }
+            String unzipped = ZipUtils.unzipString(cachedResult);
+            persisted = objectMapper.readValue(unzipped, SubsystemPersistenceDto.class);
         } catch (Exception e) {
             throw new IllegalStateException(
                     "Failed to deserialize discovery result for run ID: " + master.getDiscoveryRunId(), e);
@@ -365,14 +379,18 @@ public class SubsystemDiscoveryService {
         // 3. Deserialize discovery result
         SubsystemPersistenceDto persisted;
         try {
-            String cachedResult = master.getDiscoveryResult();
-            if (!StringUtils.hasText(cachedResult)) {
-                cachedResult = subsystemHistoryMapper.selectHistoryResult(discoveryRunId);
+            byte[] cachedResult = master.getDiscoveryResult();
+            if (cachedResult == null || cachedResult.length == 0) {
+                SubsystemRunMaster fullMaster = subsystemHistoryMapper.selectMasterById(discoveryRunId);
+                if (fullMaster != null) {
+                    cachedResult = fullMaster.getDiscoveryResult();
+                }
             }
-            if (!StringUtils.hasText(cachedResult)) {
+            if (cachedResult == null || cachedResult.length == 0) {
                 throw new IllegalStateException("No discovery result data found for run ID: " + discoveryRunId);
             }
-            persisted = objectMapper.readValue(cachedResult, SubsystemPersistenceDto.class);
+            String unzipped = ZipUtils.unzipString(cachedResult);
+            persisted = objectMapper.readValue(unzipped, SubsystemPersistenceDto.class);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to deserialize discovery result for run ID: " + discoveryRunId, e);
         }

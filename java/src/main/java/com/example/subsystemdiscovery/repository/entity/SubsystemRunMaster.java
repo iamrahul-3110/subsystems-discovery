@@ -12,7 +12,7 @@ public class SubsystemRunMaster {
     private Integer runs;
     private Double consensusThreshold;
     private Double resolution;
-    private String discoveryResult; // JSON string
+    private byte[] discoveryResult; // zipped JSON bytes
     private Integer totalSubsystems;
     private Double avgStabilityScore;
     private LocalDateTime startedAt;
@@ -69,11 +69,11 @@ public class SubsystemRunMaster {
         this.resolution = resolution;
     }
 
-    public String getDiscoveryResult() {
+    public byte[] getDiscoveryResult() {
         return discoveryResult;
     }
 
-    public void setDiscoveryResult(String discoveryResult) {
+    public void setDiscoveryResult(byte[] discoveryResult) {
         this.discoveryResult = discoveryResult;
     }
 

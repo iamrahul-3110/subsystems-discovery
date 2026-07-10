@@ -8,7 +8,8 @@ package com.example.subsystemdiscovery.boundaryanalysis.dto;
 public record BoundaryNodeRequest(
         Long discoveryRunId,
         Integer nodeLimit,
-        String sortOrder
+        String sortOrder,
+        String nodeType
 ) {
     private static final int DEFAULT_NODE_LIMIT = 20;
     private static final String DEFAULT_SORT_ORDER = "TOP";

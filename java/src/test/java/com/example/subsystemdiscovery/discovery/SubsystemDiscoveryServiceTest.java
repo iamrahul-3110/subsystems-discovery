@@ -3,6 +3,7 @@ package com.example.subsystemdiscovery.discovery;
 import com.example.subsystemdiscovery.llm.LlmSubsystemDiscoveryService;
 import com.example.subsystemdiscovery.llm.dto.LlmDiscoveryResponse;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemDto;
+import com.example.subsystemdiscovery.discovery.dto.SubsystemAlgorithmParams;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemLinkDto;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemPersistenceDto;
 import com.example.subsystemdiscovery.discovery.dto.SummaryType;
@@ -77,9 +78,10 @@ public class SubsystemDiscoveryServiceTest {
 
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                 Collections.emptyList(),
+                Collections.emptyList(),
                 Collections.emptyList()
         );
-        master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
+        master.setDiscoveryResult(ZipUtils.zipString(objectMapper.writeValueAsString(persistenceDto), "result.json"));
 
         // Mock database calls
         when(subsystemHistoryMapper.selectMasterById(100L)).thenReturn(master);
@@ -114,9 +116,10 @@ public class SubsystemDiscoveryServiceTest {
 
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                 Collections.emptyList(),
+                Collections.emptyList(),
                 Collections.emptyList()
         );
-        master.setDiscoveryResult(objectMapper.writeValueAsString(persistenceDto));
+        master.setDiscoveryResult(ZipUtils.zipString(objectMapper.writeValueAsString(persistenceDto), "result.json"));
 
         // Mock database calls
         when(subsystemHistoryMapper.selectMasterById(200L)).thenReturn(master);
@@ -141,5 +144,51 @@ public class SubsystemDiscoveryServiceTest {
         // Verify new summary was inserted into DB
         verify(subsystemHistoryMapper, times(1))
                 .insertLlmSummary(200L, "gpt-4", "COMPLETE_DETAILED", "Newly generated LLM summary text");
+    }
+
+    @Test
+    public void testDiscoverWithLlm_CachedRun() throws Exception {
+        // Setup configuration parameters
+        SubsystemAlgorithmParams params = new SubsystemAlgorithmParams(
+                null, 10, 0.7, 1.0, "gemini-flash", SummaryType.MEDIUM_DETAILED, null
+        );
+
+        ApplicationMetadata meta = new ApplicationMetadata(1L, "TEST_APP");
+        when(tbNodeHistoryMapper.selectApplicationMetadata("2026-06-17 14:00:00"))
+                .thenReturn(meta);
+
+        // Setup existing master run
+        SubsystemRunMaster master = new SubsystemRunMaster();
+        master.setDiscoveryRunId(300L);
+        master.setAnalysisTime("2026-06-17 14:00:00");
+        master.setRuns(10);
+        master.setConsensusThreshold(0.7);
+        master.setResolution(1.0);
+        master.setTotalSubsystems(1);
+        master.setAvgStabilityScore(0.9);
+
+        SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList()
+        );
+        master.setDiscoveryResult(ZipUtils.zipString(objectMapper.writeValueAsString(persistenceDto), "result.json"));
+
+        when(subsystemHistoryMapper.selectMasterByConfig("2026-06-17 14:00:00", 10, 0.7, 1.0))
+                .thenReturn(master);
+
+        // Mock LLM summary calls
+        when(subsystemHistoryMapper.selectLlmSummaryByConfig(300L, "gemini-flash", "MEDIUM_DETAILED"))
+                .thenReturn("Cached LLM summary explanation");
+
+        // Invoke method
+        LlmDiscoveryResponse response = service.discoverWithLlm("2026-06-17 14:00:00", params);
+
+        // Verify results
+        assertNotNull(response);
+        assertEquals(300L, response.discoveryRunId());
+        assertEquals("Cached LLM summary explanation", response.llmArchitecturalSummary());
+        assertEquals(1L, response.applicationId());
+        assertEquals("TEST_APP", response.applicationKey());
     }
 }

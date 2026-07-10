@@ -52,7 +52,7 @@ create table if not exists tb_gi_subsystems_history (
     runs int not null default 10,
     consensus_threshold decimal(8,4) not null default 0.70,
     resolution decimal(8,4) not null default 1.00,
-    discovery_result clob not null,
+    discovery_result bytea not null,
     total_subsystems int,
     avg_stability_score decimal(8,4),
     started_at timestamp,
