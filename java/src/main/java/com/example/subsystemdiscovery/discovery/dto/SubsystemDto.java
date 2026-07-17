@@ -1,5 +1,6 @@
 package com.example.subsystemdiscovery.discovery.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.util.List;
 import java.util.Map;
 
@@ -66,6 +67,6 @@ public record SubsystemDto(
          * e.g. {"METHOD_CALL": 142, "CLASS_DEPENDENCY": 67, "PACKAGE_CONTAINMENT": 23}
          * Tells LLM the dominant coupling style of this cluster.
          */
-        Map<String, Integer> relationSummary
+        @JsonIgnore Map<String, Integer> relationSummary
 ) {
 }

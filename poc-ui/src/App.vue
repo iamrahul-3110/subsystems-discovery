@@ -54,6 +54,7 @@
 
       <main class="main-panel">
         <StatusBar
+          v-show="!isTopPanelCollapsed || !discovery"
           :currentApplicationLabel="currentApplicationLabel"
           :nodeCount="dataset ? dataset.nodeCount : selectedNodeCount"
           :relationCount="dataset ? dataset.relationCount : '-'"
@@ -75,11 +76,26 @@
 
         <template v-else>
           <MetricsGrid
+            v-show="!isTopPanelCollapsed"
             :totalNodes="discovery.summary.totalNodes"
             :totalEdges="discovery.summary.totalEdges"
             :subsystemCount="discovery.summary.subsystemCount"
             :averageStability="discovery.summary.averageStability"
           />
+
+          <!-- Top Header Info Collapse Toggle Bar -->
+          <div 
+            class="top-collapse-bar" 
+            @click="isTopPanelCollapsed = !isTopPanelCollapsed"
+            :title="isTopPanelCollapsed ? 'Expand header info' : 'Collapse header info'"
+          >
+            <span class="collapse-icon">
+              {{ isTopPanelCollapsed ? '▼' : '▲' }}
+            </span>
+            <span class="collapse-text">
+              {{ isTopPanelCollapsed ? 'Expand Header Info' : 'Collapse Header Info' }}
+            </span>
+          </div>
 
           <!-- Tab Navigation for Discovery vs Boundary Analysis -->
           <div class="view-tabs" style="display: flex; gap: 8px; border-bottom: 2px solid #cbd5e1; margin-bottom: 20px; margin-top: 16px;">
@@ -180,13 +196,18 @@
           <div v-show="currentTab === 'boundary'" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
             <BoundaryNodesPanel 
               :boundaryData="boundaryData"
+              :discovery="discovery"
               :loading="loadingBoundary"
               :nodeLimit="boundaryNodeLimit"
               :sortOrder="boundarySortOrder"
               :nodeType="boundaryNodeType"
+              :fromSubsystem="boundaryFromSubsystem"
+              :toSubsystem="boundaryToSubsystem"
               @update:nodeLimit="boundaryNodeLimit = $event"
               @update:sortOrder="boundarySortOrder = $event"
               @update:nodeType="boundaryNodeType = $event"
+              @update:fromSubsystem="boundaryFromSubsystem = $event"
+              @update:toSubsystem="boundaryToSubsystem = $event"
             />
           </div>
         </template>
@@ -212,6 +233,7 @@ import BoundaryNodesPanel from './components/BoundaryNodesPanel.vue'
 
 const isDiscoveryCollapsed = ref(false)
 const isSummaryCollapsed = ref(false)
+const isTopPanelCollapsed = ref(false)
 const currentTab = ref('discovery')
 const boundaryData = ref(null)
 const loadingBoundary = ref(false)
@@ -220,7 +242,8 @@ const isVerticalResizing = ref(false)
 const windowHeight = ref(window.innerHeight)
 
 const totalAvailableHeight = computed(() => {
-  return Math.max(400, windowHeight.value - 380)
+  const offset = isTopPanelCollapsed.value ? 230 : 380
+  return Math.max(400, windowHeight.value - offset)
 })
 
 const summaryHeight = computed(() => {
@@ -234,7 +257,8 @@ mermaid.initialize({
   startOnLoad: false,
   theme: 'base',
   securityLevel: 'loose',
-  maxTextSize: 1000000,
+  maxTextSize: 10000000,
+  maxEdges: 1000,
   flowchart: {
     htmlLabels: true,
     curve: 'basis'
@@ -249,7 +273,7 @@ mermaid.initialize({
 })
 
 const SERVER_CONTEXT = `${['code', 'analy', 'zer'].join('')}/server`
-const API_BASE = `http://localhost:8081/${SERVER_CONTEXT}/api/poc`
+const API_BASE = `/${SERVER_CONTEXT}/api/poc`
 
 const applications = [
   { label: 'Amazon', value: 'AMAZON' },
@@ -285,7 +309,7 @@ const expandedClusters = reactive(new Set())
 const selectedMermaidSubsystems = reactive(new Set())
 const summaryMeta = reactive({ provider: '', fallback: false, llmModel: '' })
 
-const BOUNDARY_API = `http://localhost:8081/${SERVER_CONTEXT}/api/codeanalyzer/subsystem/boundary-nodes`
+const BOUNDARY_API = `/${SERVER_CONTEXT}/api/codeanalyzer/subsystem/boundary-nodes`
 
 const diagramStageRef = ref(null)
 
@@ -429,6 +453,8 @@ async function runDiscovery() {
       params: discoveryParams()
     })
     discovery.value = response.data
+    boundaryFromSubsystem.value = null
+    boundaryToSubsystem.value = null
     successMessage.value = `Leiden discovery completed successfully with ${discovery.value.summary.subsystemCount} subsystems.`
     selectedClusterId.value = sortedSubsystems.value[0]?.id || null
     if (selectedClusterId.value) {
@@ -503,7 +529,16 @@ function toggleCluster(clusterId) {
 
 async function renderMermaid() {
   try {
-    const graph = buildMermaidGraph()
+    const { graph, nodeCount, edgeCount } = buildMermaidGraph()
+    if (nodeCount > 600 || edgeCount > 1000) {
+      mermaidSvg.value = ''
+      errorMessage.value = 'Selected subsystems are too large to render smoothly — deselect some subsystems to view the diagram'
+      return
+    }
+
+    // Clear previous error if successful
+    errorMessage.value = ''
+
     const renderId = `gi-mermaid-${Date.now()}-${Math.round(Math.random() * 10000)}`
     const { svg } = await mermaid.render(renderId, graph)
     mermaidSvg.value = svg
@@ -591,10 +626,25 @@ function buildMermaidGraph() {
   const clusters = sortedSubsystems.value.filter(sub => selectedMermaidSubsystems.has(sub.id)).slice(0, 18)
   const clusterIds = new Set(clusters.map((cluster) => cluster.id))
   const lines = ['flowchart LR']
+  const visibleNodesMap = new Map()
+
+  const renderedNodeIds = new Set()
+  let renderedEdgeCount = 0
+
+  function hashCode(str) {
+    if (!str) return 0
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i)
+      hash |= 0
+    }
+    return Math.abs(hash)
+  }
 
   clusters.forEach((cluster) => {
     const clusterId = mermaidId(cluster.id)
     const rootId = `${clusterId}_root`
+    renderedNodeIds.add(rootId)
     lines.push(`  subgraph ${clusterId}["${escapeMermaid(cluster.name)}"]`)
     lines.push(`    ${rootId}["${escapeMermaid(cluster.name)}<br/>${formatNumber(cluster.nodeCount)} nodes<br/>stability ${cluster.stabilityScore}"]`)
 
@@ -602,23 +652,107 @@ function buildMermaidGraph() {
       const apis = cluster.apiEndpoints || []
       const central = (cluster.centralNodes || []).slice(0, 12)
 
-      const packages = central.filter(n => n.type === 'PACKAGE')
-      const classes = central.filter(n => n.type === 'CLASS')
-      const methods = central.filter(n => n.type === 'METHOD')
+      const packagesMap = new Map()
+      const classesMap = new Map()
+      const methodsMap = new Map()
 
-      // Classify classes
+      // Find boundary candidates linking this subsystem to other visible subsystems
+      const boundaryCandidates = []
+      ;(discovery.value?.crossNodeLinks || []).forEach(link => {
+        if (link.sourceSubsystemId === cluster.name) {
+          const targetSub = clusters.find(c => c.name === link.targetSubsystemId)
+          if (targetSub) {
+            boundaryCandidates.push({
+              name: link.sourceNodeName.substring(link.sourceNodeName.lastIndexOf('.') + 1).replace('()', ''),
+              qualifiedName: link.sourceNodeName,
+              type: link.sourceNodeName.includes('(') ? 'METHOD' : 'CLASS'
+            })
+          }
+        }
+        if (link.targetSubsystemId === cluster.name) {
+          const sourceSub = clusters.find(c => c.name === link.sourceSubsystemId)
+          if (sourceSub) {
+            boundaryCandidates.push({
+              name: link.targetNodeName.substring(link.targetNodeName.lastIndexOf('.') + 1).replace('()', ''),
+              qualifiedName: link.targetNodeName,
+              type: link.targetNodeName.includes('(') ? 'METHOD' : 'CLASS'
+            })
+          }
+        }
+      })
+
+      const addNodeToMap = (node) => {
+        if (node.type === 'PACKAGE') {
+          packagesMap.set(node.qualifiedName, { ...node })
+        } else if (node.type === 'CLASS') {
+          classesMap.set(node.qualifiedName, { ...node })
+          
+          const lastDot = node.qualifiedName.lastIndexOf('.')
+          if (lastDot !== -1) {
+            const pkgPath = node.qualifiedName.substring(0, lastDot)
+            const pkgName = node.packageName || pkgPath.substring(pkgPath.lastIndexOf('.') + 1)
+            if (!packagesMap.has(pkgPath)) {
+              packagesMap.set(pkgPath, {
+                id: hashCode(pkgPath),
+                name: pkgName,
+                qualifiedName: pkgPath,
+                type: 'PACKAGE'
+              })
+            }
+          }
+        } else if (node.type === 'METHOD') {
+          methodsMap.set(node.qualifiedName, { ...node })
+
+          const lastDotM = node.qualifiedName.lastIndexOf('.')
+          if (lastDotM !== -1) {
+            const classPath = node.qualifiedName.substring(0, lastDotM)
+            const className = classPath.substring(classPath.lastIndexOf('.') + 1)
+            if (!classesMap.has(classPath)) {
+              classesMap.set(classPath, {
+                id: hashCode(classPath),
+                name: className,
+                qualifiedName: classPath,
+                type: 'CLASS'
+              })
+            }
+
+            const lastDotC = classPath.lastIndexOf('.')
+            if (lastDotC !== -1) {
+              const pkgPath = classPath.substring(0, lastDotC)
+              const pkgName = pkgPath.substring(pkgPath.lastIndexOf('.') + 1)
+              if (!packagesMap.has(pkgPath)) {
+                packagesMap.set(pkgPath, {
+                  id: hashCode(pkgPath),
+                  name: pkgName,
+                  qualifiedName: pkgPath,
+                  type: 'PACKAGE'
+                })
+              }
+            }
+          }
+        }
+      }
+
+      central.forEach(addNodeToMap)
+      boundaryCandidates.forEach(addNodeToMap)
+
+      const packages = Array.from(packagesMap.values())
+      const classes = Array.from(classesMap.values())
+      const methods = Array.from(methodsMap.values())
+
       const controllers = classes.filter(c => c.name.endsWith('Controller') || c.name.endsWith('Client'))
       const services = classes.filter(c => c.name.endsWith('Service') || c.name.endsWith('Policy') || c.name.endsWith('Workflow'))
       const repos = classes.filter(c => c.name.endsWith('Repository') || c.name.endsWith('Mapper') || c.name.endsWith('Dao'))
-
       // Draw APIs
       apis.forEach((api, index) => {
         const apiId = `${clusterId}_api_${index}`
+        visibleNodesMap.set(api.path + "@" + cluster.name, apiId)
+        renderedNodeIds.add(apiId)
         lines.push(`    ${apiId}(["${api.method} ${api.path}"])`)
         lines.push(`    class ${apiId} apiNode`)
-        lines.push(`    ${rootId} -.-> ${apiId}`)
+        lines.push(`    ${rootId} -.--> ${apiId}`)
+        renderedEdgeCount++
 
-        // Link to matching Controller or fallback
         let targetController = controllers.find(ctrl => {
           const apiPrefix = api.path.split('/')[2] || ''
           return ctrl.name.toLowerCase().startsWith(apiPrefix.toLowerCase())
@@ -628,25 +762,32 @@ function buildMermaidGraph() {
         }
 
         if (targetController) {
-          const targetId = `${clusterId}_class_${targetController.id}`
+          const targetId = `${clusterId}_class_${hashCode(targetController.qualifiedName)}`
           lines.push(`    ${apiId} == Routing ==> ${targetId}`)
+          renderedEdgeCount++
         } else if (classes.length > 0) {
-          const targetId = `${clusterId}_class_${classes[0].id}`
+          const targetId = `${clusterId}_class_${hashCode(classes[0].qualifiedName)}`
           lines.push(`    ${apiId} == Routing ==> ${targetId}`)
+          renderedEdgeCount++
         }
       })
 
       // Draw Packages
       packages.forEach(pkg => {
-        const pkgId = `${clusterId}_pkg_${pkg.id}`
+        const pkgId = `${clusterId}_pkg_${hashCode(pkg.qualifiedName)}`
+        visibleNodesMap.set(pkg.qualifiedName + "@" + cluster.name, pkgId)
+        renderedNodeIds.add(pkgId)
         lines.push(`    ${pkgId}{{"Package: ${escapeMermaid(pkg.name)}"}}`)
         lines.push(`    class ${pkgId} packageNode`)
         lines.push(`    ${rootId} -.- ${pkgId}`)
+        renderedEdgeCount++
       })
 
       // Draw Classes
       classes.forEach(c => {
-        const classId = `${clusterId}_class_${c.id}`
+        const classId = `${clusterId}_class_${hashCode(c.qualifiedName)}`
+        visibleNodesMap.set(c.qualifiedName + "@" + cluster.name, classId)
+        renderedNodeIds.add(classId)
         let classLabel = c.name
         let nodeShape = `["${classLabel}"]`
         let nodeClass = 'serviceNode'
@@ -668,57 +809,60 @@ function buildMermaidGraph() {
         lines.push(`    ${classId}${nodeShape}`)
         lines.push(`    class ${classId} ${nodeClass}`)
 
-        // Link package to class if matching qualifiedName
         const lastDot = c.qualifiedName.lastIndexOf('.')
         const classPkgPath = lastDot !== -1 ? c.qualifiedName.substring(0, lastDot) : ''
-        const matchingPkg = packages.find(pkg => pkg.qualifiedName === classPkgPath)
-        if (matchingPkg) {
-          const pkgId = `${clusterId}_pkg_${matchingPkg.id}`
+        if (packagesMap.has(classPkgPath)) {
+          const pkgId = `${clusterId}_pkg_${hashCode(classPkgPath)}`
           lines.push(`    ${pkgId} -. Contains .-> ${classId}`)
+          renderedEdgeCount++
         } else {
           lines.push(`    ${rootId} --- ${classId}`)
+          renderedEdgeCount++
         }
       })
 
       // Draw Methods
       methods.forEach(m => {
-        const methodId = `${clusterId}_method_${m.id}`
+        const methodId = `${clusterId}_method_${hashCode(m.qualifiedName)}`
+        visibleNodesMap.set(m.qualifiedName + "@" + cluster.name, methodId)
+        renderedNodeIds.add(methodId)
         lines.push(`    ${methodId}("${m.name}()")`)
         lines.push(`    class ${methodId} methodNode`)
 
-        // Link class to method
         const lastDotM = m.qualifiedName.lastIndexOf('.')
         const methodClassPath = lastDotM !== -1 ? m.qualifiedName.substring(0, lastDotM) : ''
-        const matchingClass = classes.find(c => c.qualifiedName === methodClassPath)
-        if (matchingClass) {
-          const classId = `${clusterId}_class_${matchingClass.id}`
+        if (classesMap.has(methodClassPath)) {
+          const classId = `${clusterId}_class_${hashCode(methodClassPath)}`
           lines.push(`    ${classId} === ${methodId}`)
+          renderedEdgeCount++
         } else {
           lines.push(`    ${rootId} --- ${methodId}`)
+          renderedEdgeCount++
         }
       })
 
-      // Draw Class Call Chains
       // Controller -> Service
       controllers.forEach(ctrl => {
-        const ctrlId = `${clusterId}_class_${ctrl.id}`
+        const ctrlId = `${clusterId}_class_${hashCode(ctrl.qualifiedName)}`
         services.forEach(srv => {
-          const srvId = `${clusterId}_class_${srv.id}`
+          const srvId = `${clusterId}_class_${hashCode(srv.qualifiedName)}`
           const isRelated = ctrl.name.replace('Controller', '').toLowerCase() === srv.name.replace('Service', '').toLowerCase()
           if (isRelated || controllers.length === 1 || services.length === 1) {
             lines.push(`    ${ctrlId} --> ${srvId}`)
+            renderedEdgeCount++
           }
         })
       })
 
       // Service -> Repo
       services.forEach(srv => {
-        const srvId = `${clusterId}_class_${srv.id}`
+        const srvId = `${clusterId}_class_${hashCode(srv.qualifiedName)}`
         repos.forEach(rp => {
-          const rpId = `${clusterId}_class_${rp.id}`
+          const rpId = `${clusterId}_class_${hashCode(rp.qualifiedName)}`
           const isRelated = srv.name.replace('Service', '').toLowerCase() === rp.name.replace('Repository', '').toLowerCase()
           if (isRelated || services.length === 1 || repos.length === 1) {
             lines.push(`    ${srvId} --> ${rpId}`)
+            renderedEdgeCount++
           }
         })
       })
@@ -726,15 +870,69 @@ function buildMermaidGraph() {
     lines.push('  end')
   })
 
+  let linkCounter = 0
+  const activeInternalLinks = new Set()
+
+  // 1. Draw direct cross-subsystem internal connections (mapping to root if collapsed)
+  ;(discovery.value?.crossNodeLinks || []).forEach(link => {
+    let srcId = visibleNodesMap.get(link.sourceNodeName + "@" + link.sourceSubsystemId)
+    let srcIsRoot = false
+    if (!srcId) {
+      const sub = sortedSubsystems.value.find(s => s.name === link.sourceSubsystemId)
+      if (sub && selectedMermaidSubsystems.has(sub.id)) {
+        srcId = `${mermaidId(sub.id)}_root`
+        srcIsRoot = true
+      }
+    }
+
+    let tgtId = visibleNodesMap.get(link.targetNodeName + "@" + link.targetSubsystemId)
+    let tgtIsRoot = false
+    if (!tgtId) {
+      const sub = sortedSubsystems.value.find(s => s.name === link.targetSubsystemId)
+      if (sub && selectedMermaidSubsystems.has(sub.id)) {
+        tgtId = `${mermaidId(sub.id)}_root`
+        tgtIsRoot = true
+      }
+    }
+
+    if (srcId && tgtId && srcId !== tgtId) {
+      // If both are root (collapsed), we skip drawing individual node-level lines between them
+      if (srcIsRoot && tgtIsRoot) {
+        return
+      }
+
+      // Draw the line from the visible internal node directly to target (which may be target internal node or target root)
+      const relationLabel = escapeMermaid(link.relationType.replace('_', ' '))
+      lines.push(`  ${srcId} -->|"${relationLabel}"| ${tgtId}`)
+      lines.push(`  linkStyle ${linkCounter} stroke:#ef4444,stroke-width:1.5px,stroke-dasharray: 5 5`)
+      linkCounter++
+      renderedEdgeCount++
+
+      activeInternalLinks.add(link.sourceSubsystemId + "-->" + link.targetSubsystemId)
+      activeInternalLinks.add(link.targetSubsystemId + "-->" + link.sourceSubsystemId)
+    }
+  })
+
+  // 2. Draw subsystem-level root connections if no internal connection has been drawn between this pair
   ;(discovery.value?.subsystemLinks || [])
     .filter((link) => clusterIds.has(link.source) && clusterIds.has(link.target))
-    .slice(0, 24)
-    .forEach((link, index) => {
+    .slice(0, 1000)
+    .forEach((link) => {
+      const srcSubName = sortedSubsystems.value.find(s => s.id === link.source)?.name || link.source
+      const tgtSubName = sortedSubsystems.value.find(s => s.id === link.target)?.name || link.target
+      
+      const linkKey = srcSubName + "-->" + tgtSubName
+      if (activeInternalLinks.has(linkKey)) {
+        return // Skip, already mapped at the internal class/method level!
+      }
+
       const source = `${mermaidId(link.source)}_root`
       const target = `${mermaidId(link.target)}_root`
       const arrow = link.couplingStrength === 'HIGH' ? '==>' : link.couplingStrength === 'LOW' ? '-.->' : '-->'
       lines.push(`  ${source} ${arrow}|${escapeMermaid(link.couplingStrength)} / ${link.edgeCount} edges| ${target}`)
-      lines.push(`  linkStyle ${index} stroke:${linkColor(link.couplingStrength)},stroke-width:${link.couplingStrength === 'HIGH' ? '3px' : '1.8px'}`)
+      lines.push(`  linkStyle ${linkCounter} stroke:${linkColor(link.couplingStrength)},stroke-width:${link.couplingStrength === 'HIGH' ? '3px' : '1.8px'}`)
+      linkCounter++
+      renderedEdgeCount++
     })
 
   lines.push('  classDef clusterRoot fill:#eff6ff,stroke:#2563eb,stroke-width:1.5px,color:#0f172a')
@@ -752,7 +950,11 @@ function buildMermaidGraph() {
     lines.push(`  class ${clusterId}_root clusterRoot`)
   })
 
-  return lines.join('\n')
+  return {
+    graph: lines.join('\n'),
+    nodeCount: renderedNodeIds.size,
+    edgeCount: renderedEdgeCount
+  }
 }
 
 function linkColor(strength) {
@@ -781,10 +983,12 @@ function handleError(error, fallback) {
 }
 
 const boundaryNodeLimit = ref(20)
-const boundarySortOrder = ref('TOP')
+const boundarySortOrder = ref('SCORE_DESC')
 const boundaryNodeType = ref('ALL')
+const boundaryFromSubsystem = ref(null)
+const boundaryToSubsystem = ref(null)
 
-watch([boundaryNodeLimit, boundarySortOrder, boundaryNodeType], () => {
+watch([boundaryNodeLimit, boundarySortOrder, boundaryNodeType, boundaryFromSubsystem, boundaryToSubsystem], () => {
   fetchBoundaryNodes()
 })
 
@@ -798,7 +1002,9 @@ async function fetchBoundaryNodes() {
         discoveryRunId: discovery.value.discoveryRunId,
         nodeLimit: boundaryNodeLimit.value,
         sortOrder: boundarySortOrder.value,
-        nodeType: boundaryNodeType.value
+        nodeType: boundaryNodeType.value,
+        fromSubsystem: boundaryFromSubsystem.value,
+        toSubsystem: boundaryToSubsystem.value
       }
     )
     boundaryData.value = response.data
@@ -825,4 +1031,13 @@ function selectAllMermaidSubsystems() {
 function selectNoneMermaidSubsystems() {
   selectedMermaidSubsystems.clear()
 }
+
 </script>
+
+<style>
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+</style>

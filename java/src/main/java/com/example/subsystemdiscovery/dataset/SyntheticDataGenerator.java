@@ -42,8 +42,11 @@ public class SyntheticDataGenerator {
         upsertSnapshot(applicationId, analysisTime);
 
         List<String> domains = domainsFor(template);
-        List<DomainRange> ranges = generateNodes(applicationId, analysisTime, template, domains, nodeCount);
-        int relationCount = generateRelations(applicationId, analysisTime, ranges, random);
+        GenerationResult result = generateNodes(applicationId, analysisTime, template, domains, nodeCount);
+        
+        insertClassAndPackageNodes(applicationId, analysisTime, nodeCount, result);
+
+        int relationCount = generateRelations(applicationId, analysisTime, result, nodeCount, random);
 
         log.info("Successfully generated synthetic dataset: appId={}, nodeCount={}, relationCount={}",
                 applicationId, nodeCount, relationCount);
@@ -83,11 +86,11 @@ public class SyntheticDataGenerator {
                 """, applicationId, analysisTime);
     }
 
-    private List<DomainRange> generateNodes(long applicationId,
-                                            String analysisTime,
-                                            DomainTemplate template,
-                                            List<String> domains,
-                                            int nodeCount) {
+    private GenerationResult generateNodes(long applicationId,
+                                           String analysisTime,
+                                           DomainTemplate template,
+                                           List<String> domains,
+                                           int nodeCount) {
         log.info("Generating {} nodes across {} business domains...", nodeCount, domains.size());
         String nodeSql = """
                 INSERT INTO tb_node_history (
@@ -103,6 +106,10 @@ public class SyntheticDataGenerator {
         List<Object[]> nodeBatch = new ArrayList<>(BATCH_SIZE);
         List<Object[]> detailBatch = new ArrayList<>(BATCH_SIZE * 3);
         List<DomainRange> ranges = new ArrayList<>();
+
+        java.util.Set<String> classSet = new java.util.LinkedHashSet<>();
+        java.util.Set<String> packageSet = new java.util.LinkedHashSet<>();
+        List<MethodMeta> methods = new ArrayList<>();
 
         int baseCount = nodeCount / domains.size();
         int remainder = nodeCount % domains.size();
@@ -122,6 +129,10 @@ public class SyntheticDataGenerator {
                 String className = toPascal(domain) + componentSuffix(localIndex) + localIndex;
                 String methodName = methodPrefix(localIndex) + toPascal(domain) + "Flow" + localIndex;
                 String nodeName = packageName + "." + className + "." + methodName + "()";
+
+                classSet.add(packageName + "." + className);
+                packageSet.add(packageName);
+                methods.add(new MethodMeta(nodeId, packageName + "." + className, packageName));
 
                 nodeBatch.add(new Object[]{
                         applicationId, analysisTime, nodeId, nodeName, "METHOD"
@@ -151,12 +162,80 @@ public class SyntheticDataGenerator {
         flush(nodeSql, nodeBatch);
         flush(detailSql, detailBatch);
         log.info("Node and detail records successfully generated and saved.");
-        return ranges;
+        
+        return new GenerationResult(ranges, new ArrayList<>(classSet), new ArrayList<>(packageSet), methods);
     }
 
-    private int generateRelations(long applicationId,
+    private void insertClassAndPackageNodes(long applicationId, String analysisTime, int nodeCount, GenerationResult result) {
+        log.info("Inserting {} Class nodes and {} Package nodes...", result.classList().size(), result.packageList().size());
+        String nodeSql = """
+                INSERT INTO tb_node_history (
+                    application_id, analysis_time, node_id, node_name, node_type, use_yn
+                ) VALUES (?, CAST(? AS TIMESTAMP), ?, ?, ?, TRUE)
+                """;
+        String detailSql = """
+                INSERT INTO tb_node_detail_history (
+                    application_id, analysis_time, node_id, split_node_level, split_node_name, split_node_type
+                ) VALUES (?, CAST(? AS TIMESTAMP), ?, ?, ?, ?)
+                """;
+
+        List<Object[]> nodeBatch = new ArrayList<>(BATCH_SIZE);
+        List<Object[]> detailBatch = new ArrayList<>(BATCH_SIZE * 3);
+
+        int numMethods = nodeCount;
+        int numClasses = result.classList().size();
+
+        // 1. Class nodes
+        for (int i = 0; i < numClasses; i++) {
+            long classNodeId = numMethods + 1 + i;
+            String classQualifiedName = result.classList().get(i);
+            
+            nodeBatch.add(new Object[]{
+                    applicationId, analysisTime, classNodeId, classQualifiedName, "CLASS"
+            });
+            
+            int lastDot = classQualifiedName.lastIndexOf('.');
+            String className = classQualifiedName.substring(lastDot + 1);
+            String packageName = classQualifiedName.substring(0, lastDot);
+            
+            detailBatch.add(new Object[]{
+                    applicationId, analysisTime, classNodeId, 0, className, "CLASS"
+            });
+            detailBatch.add(new Object[]{
+                    applicationId, analysisTime, classNodeId, 1, packageName, "PACKAGE"
+            });
+
+            if (nodeBatch.size() >= BATCH_SIZE) {
+                flush(nodeSql, nodeBatch);
+                flush(detailSql, detailBatch);
+            }
+        }
+
+        // 2. Package nodes
+        for (int i = 0; i < result.packageList().size(); i++) {
+            long packageNodeId = numMethods + numClasses + 1 + i;
+            String packageName = result.packageList().get(i);
+            
+            nodeBatch.add(new Object[]{
+                    applicationId, analysisTime, packageNodeId, packageName, "PACKAGE"
+            });
+            
+            detailBatch.add(new Object[]{
+                    applicationId, analysisTime, packageNodeId, 0, packageName, "PACKAGE"
+            });
+
+            if (nodeBatch.size() >= BATCH_SIZE) {
+                flush(nodeSql, nodeBatch);
+                flush(detailSql, detailBatch);
+            }
+        }
+
+        flush(nodeSql, nodeBatch);
+        flush(detailSql, detailBatch);
+    }    private int generateRelations(long applicationId,
                                   String analysisTime,
-                                  List<DomainRange> ranges,
+                                  GenerationResult result,
+                                  int nodeCount,
                                   Random random) {
         log.info("Generating relations between domains...");
         String relationSql = """
@@ -167,26 +246,91 @@ public class SyntheticDataGenerator {
 
         List<Object[]> relationBatch = new ArrayList<>(BATCH_SIZE);
         long relationId = 1L;
+        java.util.Set<String> classRelations = new java.util.HashSet<>();
 
-        for (int rangeIndex = 0; rangeIndex < ranges.size(); rangeIndex++) {
-            DomainRange range = ranges.get(rangeIndex);
+        // 1. Generate method-call relations
+        for (int rangeIndex = 0; rangeIndex < result.ranges().size(); rangeIndex++) {
+            DomainRange range = result.ranges().get(rangeIndex);
             for (long source = range.start(); source <= range.end(); source++) {
                 int internalEdges = 3 + random.nextInt(5);
                 for (int i = 0; i < internalEdges; i++) {
                     long target = randomNode(range, random);
                     if (target != source) {
                         relationBatch.add(relationRow(applicationId, analysisTime, relationId++, source, target));
+                        trackClassRelation(source, target, result, classRelations);
                     }
                 }
 
                 if (random.nextDouble() < 0.22d) {
-                    DomainRange externalRange = ranges.get((rangeIndex + 1 + random.nextInt(ranges.size() - 1)) % ranges.size());
+                    DomainRange externalRange = result.ranges().get((rangeIndex + 1 + random.nextInt(result.ranges().size() - 1)) % result.ranges().size());
                     long target = randomNode(externalRange, random);
                     relationBatch.add(relationRow(applicationId, analysisTime, relationId++, source, target));
+                    trackClassRelation(source, target, result, classRelations);
                 }
 
                 if (relationBatch.size() >= BATCH_SIZE) {
                     log.debug("Flushing relation batch (size={})", relationBatch.size());
+                    flush(relationSql, relationBatch);
+                }
+            }
+        }
+
+        java.util.Map<String, Integer> classToIndex = new java.util.HashMap<>();
+        for (int i = 0; i < result.classList().size(); i++) {
+            classToIndex.put(result.classList().get(i), i);
+        }
+
+        // 1.5. Generate CLASS_DEPENDENCY relations
+        for (String rel : classRelations) {
+            String[] parts = rel.split("->");
+            String classA = parts[0];
+            String classB = parts[1];
+            Integer classAIdx = classToIndex.get(classA);
+            Integer classBIdx = classToIndex.get(classB);
+            if (classAIdx != null && classBIdx != null) {
+                long classANodeId = nodeCount + 1 + classAIdx;
+                long classBNodeId = nodeCount + 1 + classBIdx;
+                relationBatch.add(new Object[]{
+                        applicationId, analysisTime, relationId++, classANodeId, classBNodeId, "CLASS_DEPENDENCY"
+                });
+                if (relationBatch.size() >= BATCH_SIZE) {
+                    flush(relationSql, relationBatch);
+                }
+            }
+        }
+
+        // 2. Generate CLASS_METHOD_OWNERSHIP relations (from Class to Method)
+        for (MethodMeta method : result.methods()) {
+            Integer classIdx = classToIndex.get(method.classQualifiedName());
+            if (classIdx != null) {
+                long classNodeId = nodeCount + 1 + classIdx;
+                relationBatch.add(new Object[]{
+                        applicationId, analysisTime, relationId++, classNodeId, method.nodeId(), "CLASS_METHOD_OWNERSHIP"
+                });
+                if (relationBatch.size() >= BATCH_SIZE) {
+                    flush(relationSql, relationBatch);
+                }
+            }
+        }
+
+        // 3. Generate PACKAGE_CONTAINMENT relations (from Package to Class)
+        java.util.Map<String, Integer> packageToIndex = new java.util.HashMap<>();
+        for (int i = 0; i < result.packageList().size(); i++) {
+            packageToIndex.put(result.packageList().get(i), i);
+        }
+        for (int i = 0; i < result.classList().size(); i++) {
+            String classQualifiedName = result.classList().get(i);
+            int lastDot = classQualifiedName.lastIndexOf('.');
+            String packageName = classQualifiedName.substring(0, lastDot);
+            
+            Integer pkgIdx = packageToIndex.get(packageName);
+            if (pkgIdx != null) {
+                long classNodeId = nodeCount + 1 + i;
+                long packageNodeId = nodeCount + result.classList().size() + 1 + pkgIdx;
+                relationBatch.add(new Object[]{
+                        applicationId, analysisTime, relationId++, packageNodeId, classNodeId, "PACKAGE_CONTAINMENT"
+                });
+                if (relationBatch.size() >= BATCH_SIZE) {
                     flush(relationSql, relationBatch);
                 }
             }
@@ -200,6 +344,15 @@ public class SyntheticDataGenerator {
         return Math.toIntExact(relationId - 1);
     }
 
+    private void trackClassRelation(long source, long target, GenerationResult result, java.util.Set<String> classRelations) {
+        MethodMeta sourceMethod = result.methods().get((int) (source - 1));
+        MethodMeta targetMethod = result.methods().get((int) (target - 1));
+        String classA = sourceMethod.classQualifiedName();
+        String classB = targetMethod.classQualifiedName();
+        if (!classA.equals(classB)) {
+            classRelations.add(classA + "->" + classB);
+        }
+    }
     private Object[] relationRow(long applicationId,
                                  String analysisTime,
                                  long relationId,
@@ -317,6 +470,17 @@ public class SyntheticDataGenerator {
     }
 
     private record DomainRange(String name, String slug, long start, long end) {
+    }
+
+    private record MethodMeta(long nodeId, String classQualifiedName, String packageName) {
+    }
+
+    private record GenerationResult(
+            List<DomainRange> ranges,
+            List<String> classList,
+            List<String> packageList,
+            List<MethodMeta> methods
+    ) {
     }
 
     public record GeneratedDataset(

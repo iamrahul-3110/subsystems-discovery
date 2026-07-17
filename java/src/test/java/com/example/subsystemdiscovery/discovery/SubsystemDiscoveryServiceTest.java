@@ -79,6 +79,7 @@ public class SubsystemDiscoveryServiceTest {
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
                 Collections.emptyList(),
                 Collections.emptyList(),
+                Collections.emptyList(),
                 Collections.emptyList()
         );
         master.setDiscoveryResult(ZipUtils.zipString(objectMapper.writeValueAsString(persistenceDto), "result.json"));
@@ -115,6 +116,7 @@ public class SubsystemDiscoveryServiceTest {
         master.setAvgStabilityScore(0.92);
 
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
+                Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyList()
@@ -168,6 +170,7 @@ public class SubsystemDiscoveryServiceTest {
         master.setAvgStabilityScore(0.9);
 
         SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
+                Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyList()

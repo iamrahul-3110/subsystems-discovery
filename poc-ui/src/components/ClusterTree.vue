@@ -3,7 +3,7 @@
     <!-- Subsystems Header with selection controls -->
     <div class="panel-heading" style="border-radius: 6px 6px 0 0; padding: 10px 12px; flex-shrink: 0;">
       <span class="eyebrow" style="margin: 0; font-size: 11px;">Subsystems ({{ selectedMermaidSubsystems.size }}/{{ sortedSubsystems.length }})</span>
-      <div class="tree-header-actions" style="display: flex; gap: 6px;">
+      <div class="tree-header-actions" style="display: flex; gap: 6px; align-items: center;">
         <button type="button" class="btn-tiny" @click="$emit('select-all')">All</button>
         <button type="button" class="btn-tiny" @click="$emit('select-none')">Clear</button>
       </div>

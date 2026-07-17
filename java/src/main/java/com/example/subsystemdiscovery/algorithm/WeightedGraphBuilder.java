@@ -162,6 +162,12 @@ public class WeightedGraphBuilder {
         String key = left + "--" + right;
         WeightedEdge edge = edgeByPair.computeIfAbsent(key, ignored -> new WeightedEdge(left, right));
         edge.addOccurrence(weight, relationType);
+        
+        if (source.equals(left)) {
+            edge.addForwardOccurrence();
+        } else {
+            edge.addBackwardOccurrence();
+        }
     }
 
     // -------------------------------------------------------------------------

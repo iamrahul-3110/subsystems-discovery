@@ -15,6 +15,8 @@ import com.example.subsystemdiscovery.discovery.dto.SubsystemDto;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemLinkDto;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemPersistenceDto;
 import com.example.subsystemdiscovery.discovery.dto.SummaryDto;
+import com.example.subsystemdiscovery.discovery.dto.NodeAssignmentDto;
+import com.example.subsystemdiscovery.discovery.dto.NodeLinkDto;
 import com.example.subsystemdiscovery.repository.entity.ApplicationMetadata;
 import com.example.subsystemdiscovery.repository.entity.SubsystemRunMaster;
 import com.example.subsystemdiscovery.repository.SubsystemHistoryMapper;
@@ -147,16 +149,17 @@ public class SubsystemDiscoveryService {
                                 existingMaster.getResolution(),
                                 WEIGHTING_VERSION);
 
-                        // Reconstruct response with active run ID just to ensure consistency
-                        return new SubsystemDiscoveryResponse(
-                                existingMaster.getDiscoveryRunId(),
-                                resolvedId,
-                                resolvedKey,
-                                algorithm,
-                                summary,
-                                persisted.subsystems(),
-                                persisted.subsystemLinks(),
-                                persisted.nodeAssignments());
+                         // Reconstruct response with active run ID just to ensure consistency
+                         return new SubsystemDiscoveryResponse(
+                                 existingMaster.getDiscoveryRunId(),
+                                 resolvedId,
+                                 resolvedKey,
+                                 algorithm,
+                                 summary,
+                                 persisted.subsystems(),
+                                 persisted.subsystemLinks(),
+                                 persisted.crossNodeLinks() != null ? persisted.crossNodeLinks() : List.of(),
+                                 persisted.nodeAssignments());
                     }
                 } catch (Exception e) {
                     // Fall back to executing Leiden if deserialization fails
@@ -188,6 +191,9 @@ public class SubsystemDiscoveryService {
 
         LocalDateTime completedAt = LocalDateTime.now(ZoneId.systemDefault());
 
+        List<NodeLinkDto> crossNodeLinks = computeCrossNodeLinks(
+                weightedGraph, aggregation.getNodeAssignments(), subsystems);
+
         SubsystemDiscoveryResponse response = new SubsystemDiscoveryResponse(
                 null, // discoveryRunId will be populated after inserting into the table
                 resolvedId,
@@ -197,6 +203,7 @@ public class SubsystemDiscoveryService {
                         subsystems.size(), round(averageStability)),
                 subsystems,
                 aggregation.getSubsystemLinks(),
+                crossNodeLinks,
                 aggregation.getNodeAssignments());
 
         // Persist the new run results to database
@@ -211,7 +218,7 @@ public class SubsystemDiscoveryService {
             master.setTotalSubsystems(subsystems.size());
             master.setAvgStabilityScore(round(averageStability));
             SubsystemPersistenceDto persistenceDto = new SubsystemPersistenceDto(
-                    response.subsystems(), response.subsystemLinks(), response.nodeAssignments());
+                    response.subsystems(), response.subsystemLinks(), response.crossNodeLinks(), response.nodeAssignments());
             try {
                 String jsonStr = objectMapper.writeValueAsString(persistenceDto);
                 byte[] zipped = ZipUtils.zipString(jsonStr, "result.json");
@@ -235,6 +242,7 @@ public class SubsystemDiscoveryService {
                     response.summary(),
                     response.subsystems(),
                     response.subsystemLinks(),
+                    response.crossNodeLinks(),
                     response.nodeAssignments());
 
         } catch (Exception e) {
@@ -459,6 +467,26 @@ public class SubsystemDiscoveryService {
         return weightedGraphBuilder.build(rawGraphs);
     }
 
+    /**
+     * Returns both the discovery response and the weighted graph in a single call.
+     *
+     * <p>Fix #2: Boundary node detection previously called {@code discover()} and
+     * {@code buildWeightedGraph()} separately, causing the raw graph data to be
+     * loaded from the DB and the weighted graph to be built <em>twice</em>.
+     * This method loads the DB data once, builds the graph once, and returns both.
+     */
+    public record DiscoveryWithGraph(SubsystemDiscoveryResponse response, WeightedGraph graph) {}
+
+    public DiscoveryWithGraph discoverWithGraph(String analysisTime, SubsystemAlgorithmParams params) {
+        SubsystemDiscoveryResponse response = discover(analysisTime, params);
+        // The graph is always rebuilt from raw data (it's not persisted).
+        // But now we do it once instead of twice.
+        ApplicationMetadata meta = resolveMetadata(null, null, analysisTime);
+        List<RawGraphDto> rawGraphs = collectGraphs(meta.applicationId(), analysisTime, meta.applicationKey(), params);
+        WeightedGraph graph = weightedGraphBuilder.build(rawGraphs);
+        return new DiscoveryWithGraph(response, graph);
+    }
+
     private SubsystemDto toSubsystemDto(SubsystemDraft draft) {
         LabelResult label = subsystemLabelService.label(draft);
         return new SubsystemDto(
@@ -477,5 +505,70 @@ public class SubsystemDiscoveryService {
 
     private static double round(double value) {
         return Math.round(value * 1000.0) / 1000.0;
+    }
+
+    private List<NodeLinkDto> computeCrossNodeLinks(
+            WeightedGraph weightedGraph,
+            List<NodeAssignmentDto> nodeAssignments,
+            List<SubsystemDto> subsystems) {
+        
+        java.util.Map<Long, String> nodeToSubsystem = new java.util.HashMap<>();
+        for (NodeAssignmentDto assignment : nodeAssignments) {
+            nodeToSubsystem.put(assignment.nodeId(), assignment.subsystemId());
+        }
+
+        java.util.Map<String, String> subsystemNames = new java.util.HashMap<>();
+        for (SubsystemDto sub : subsystems) {
+            subsystemNames.put(sub.id(), sub.name());
+        }
+
+        java.util.Map<Long, com.example.subsystemdiscovery.algorithm.model.GraphNode> nodeById = new java.util.HashMap<>();
+        for (com.example.subsystemdiscovery.algorithm.model.GraphNode node : weightedGraph.getNodes()) {
+            nodeById.put(node.getId(), node);
+        }
+
+        List<NodeLinkDto> crossNodeLinks = new java.util.ArrayList<>();
+        for (com.example.subsystemdiscovery.algorithm.model.WeightedEdge edge : weightedGraph.getEdges()) {
+            Long srcId = edge.getSource();
+            Long tgtId = edge.getTarget();
+            String srcSubId = nodeToSubsystem.get(srcId);
+            String tgtSubId = nodeToSubsystem.get(tgtId);
+
+            if (srcSubId == null || tgtSubId == null || srcSubId.equals(tgtSubId)) {
+                continue;
+            }
+
+            com.example.subsystemdiscovery.algorithm.model.GraphNode srcNode = nodeById.get(srcId);
+            com.example.subsystemdiscovery.algorithm.model.GraphNode tgtNode = nodeById.get(tgtId);
+
+            if (srcNode == null || tgtNode == null) {
+                continue;
+            }
+
+            String srcSubName = subsystemNames.getOrDefault(srcSubId, srcSubId);
+            String tgtSubName = subsystemNames.getOrDefault(tgtSubId, tgtSubId);
+
+            int forward = edge.getForwardOccurrences() > 0 ? edge.getForwardOccurrences() : (edge.getBackwardOccurrences() == 0 ? 1 : 0);
+            if (forward > 0) {
+                crossNodeLinks.add(new NodeLinkDto(
+                        srcNode.getQualifiedName(), srcSubName,
+                        tgtNode.getQualifiedName(), tgtSubName,
+                        edge.getWeight(),
+                        edge.getRelationTypes().keySet().stream().findFirst().map(Enum::name).orElse("CLASS_DEPENDENCY")
+                ));
+            }
+
+            int backward = edge.getBackwardOccurrences();
+            if (backward > 0) {
+                crossNodeLinks.add(new NodeLinkDto(
+                        tgtNode.getQualifiedName(), tgtSubName,
+                        srcNode.getQualifiedName(), srcSubName,
+                        edge.getWeight(),
+                        edge.getRelationTypes().keySet().stream().findFirst().map(Enum::name).orElse("CLASS_DEPENDENCY")
+                ));
+            }
+        }
+
+        return crossNodeLinks;
     }
 }

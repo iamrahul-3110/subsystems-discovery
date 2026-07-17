@@ -1,18 +1,14 @@
 package com.example.subsystemdiscovery.boundaryanalysis.dto;
 
-import java.util.List;
-
 /**
- * Lightweight overview statistics for the boundary node detection response.
- * Provides summary numbers suitable for a frontend dashboard.
+ * Lightweight overview statistics for the boundary analysis response.
+ * Contains exactly the 5 stats shown in the dashboard metrics grid.
  */
 public record BoundaryStatisticsDto(
         int totalBoundaryNodes,
-        int totalNodes,
-        double boundaryNodeRatio,
-        int totalSubsystems,
-        double averageCrossSubsystemConnections,
-        double maximumBoundaryScore,
-        List<String> topCriticalBoundaryNodes
+        double boundaryRatio,
+        int totalSubsystemInteractions,
+        double avgCrossSubsystemConnections,
+        double highestBoundaryScore
 ) {
 }

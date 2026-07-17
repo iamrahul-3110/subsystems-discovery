@@ -2401,4 +2401,52 @@ body.dark .score-bar-bg {
 
 body.dark .score-val {
   color: #cbd5e1;
+}
+
+/* Top Collapse Bar styling */
+.top-collapse-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  padding: 4px 14px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: fit-content;
+  margin: -1px auto 16px;
+  transition: all 0.2s ease;
+  user-select: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  position: relative;
+  z-index: 40;
+}
+
+.top-collapse-bar:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+  border-color: #94a3b8;
+}
+
+.top-collapse-bar .collapse-icon {
+  font-size: 8px;
+}
+
+body.dark .top-collapse-bar {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+body.dark .top-collapse-bar:hover {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: #475569;
 }

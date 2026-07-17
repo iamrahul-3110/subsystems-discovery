@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -97,24 +98,44 @@ public class GraphExtractionService {
 
         // 3. Build the synthetic node hierarchy: PACKAGE → CLASS → METHOD
         Map<String, RawNodeDto> nodesByKey = new LinkedHashMap<>();
+        Map<String, String> graphKeyByNodeId = new HashMap<>();
+        
         for (NodeRow nodeRow : nodeRows) {
-            MethodParts parts = MethodParts.from(
-                    nodeRow, detailsByNodeId.getOrDefault(nodeRow.nodeId(), List.of()));
-            addPackageHierarchy(nodesByKey, parts.packageName());
-            addClassNode(nodesByKey, parts);
-            addMethodNode(nodesByKey, nodeRow.nodeId(), parts);
+            if ("METHOD".equalsIgnoreCase(nodeRow.nodeType())) {
+                graphKeyByNodeId.put(nodeRow.nodeId(), "method:" + nodeRow.nodeId());
+                
+                MethodParts parts = MethodParts.from(
+                        nodeRow, detailsByNodeId.getOrDefault(nodeRow.nodeId(), List.of()));
+                addPackageHierarchy(nodesByKey, parts.packageName());
+                addClassNode(nodesByKey, parts);
+                addMethodNode(nodesByKey, nodeRow.nodeId(), parts);
+            } else if ("CLASS".equalsIgnoreCase(nodeRow.nodeType())) {
+                graphKeyByNodeId.put(nodeRow.nodeId(), "class:" + nodeRow.nodeName().trim().toLowerCase(Locale.ROOT));
+            } else if ("PACKAGE".equalsIgnoreCase(nodeRow.nodeType())) {
+                graphKeyByNodeId.put(nodeRow.nodeId(), "package:" + nodeRow.nodeName().trim().toLowerCase(Locale.ROOT));
+            }
         }
 
         // 4. Load edges (call-graph relations)
         List<RawLinkDto> links = tbNodeHistoryMapper.selectLinks(applicationId, analysisTime)
                 .stream()
-                .map(link -> new RawLinkDto(
-                        methodKey(link.fromKey()),
-                        methodKey(link.toKey()),
-                        null,
-                        null,
-                        "DB_NODE_RELATION_HISTORY"
-                ))
+                .map(link -> {
+                    String fromKey = graphKeyByNodeId.get(link.fromKey());
+                    String toKey = graphKeyByNodeId.get(link.toKey());
+                    if (fromKey == null) {
+                        fromKey = "method:" + link.fromKey();
+                    }
+                    if (toKey == null) {
+                        toKey = "method:" + link.toKey();
+                    }
+                    return new RawLinkDto(
+                            fromKey,
+                            toKey,
+                            null,
+                            null,
+                            "DB_NODE_RELATION_HISTORY"
+                    );
+                })
                 .toList();
 
         if (nodesByKey.isEmpty()) {

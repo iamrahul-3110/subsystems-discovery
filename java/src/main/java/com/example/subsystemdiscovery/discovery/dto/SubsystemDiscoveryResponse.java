@@ -11,6 +11,7 @@ public record SubsystemDiscoveryResponse(
         SummaryDto summary,
         List<SubsystemDto> subsystems,
         List<SubsystemLinkDto> subsystemLinks,
+        List<NodeLinkDto> crossNodeLinks,
         @JsonIgnore List<NodeAssignmentDto> nodeAssignments
 ) {
 }

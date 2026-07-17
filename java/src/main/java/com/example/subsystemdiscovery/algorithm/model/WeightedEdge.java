@@ -16,6 +16,8 @@ public class WeightedEdge {
     private Long target;
     private double weight;
     private int occurrenceCount;
+    private int forwardOccurrences;
+    private int backwardOccurrences;
     private Map<RelationType, Integer> relationTypes = new EnumMap<>(RelationType.class);
 
     public WeightedEdge() {
@@ -76,5 +78,21 @@ public class WeightedEdge {
         this.weight += weight;
         this.occurrenceCount++;
         this.relationTypes.merge(relationType == null ? RelationType.UNKNOWN : relationType, 1, Integer::sum);
+    }
+
+    public int getForwardOccurrences() {
+        return forwardOccurrences;
+    }
+
+    public void addForwardOccurrence() {
+        this.forwardOccurrences++;
+    }
+
+    public int getBackwardOccurrences() {
+        return backwardOccurrences;
+    }
+
+    public void addBackwardOccurrence() {
+        this.backwardOccurrences++;
     }
 }

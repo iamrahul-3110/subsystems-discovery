@@ -1,61 +1,56 @@
 package com.example.subsystemdiscovery.boundaryanalysis.service;
 
-import com.example.subsystemdiscovery.algorithm.model.GraphNode;
-import com.example.subsystemdiscovery.algorithm.model.WeightedEdge;
 import com.example.subsystemdiscovery.algorithm.model.WeightedGraph;
 import com.example.subsystemdiscovery.boundaryanalysis.dto.BoundaryNodeDto;
 import com.example.subsystemdiscovery.boundaryanalysis.dto.BoundaryNodeRequest;
 import com.example.subsystemdiscovery.boundaryanalysis.dto.BoundaryNodeResponse;
 import com.example.subsystemdiscovery.boundaryanalysis.dto.BoundaryStatisticsDto;
+import com.example.subsystemdiscovery.boundaryanalysis.dto.SelectedInteractionDto;
+import com.example.subsystemdiscovery.boundaryanalysis.dto.SubsystemInteractionDto;
+import com.example.subsystemdiscovery.boundaryanalysis.dto.ConnectedSubsystemDto;
 import com.example.subsystemdiscovery.discovery.SubsystemDiscoveryService;
 import com.example.subsystemdiscovery.discovery.dto.NodeAssignmentDto;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemAlgorithmParams;
 import com.example.subsystemdiscovery.discovery.dto.SubsystemDiscoveryResponse;
-import com.example.subsystemdiscovery.discovery.dto.SubsystemDto;
 import com.example.subsystemdiscovery.repository.SubsystemHistoryMapper;
 import com.example.subsystemdiscovery.repository.entity.SubsystemRunMaster;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
- * Identifies boundary nodes — nodes whose outgoing or incoming edges
- * connect different subsystems.
+ * Optimized orchestrator for boundary node detection.
  *
- * <h3>Algorithm (single-pass, O(E))</h3>
  * <ol>
- * <li>Load the existing subsystem discovery result (cached or freshly
- * triggered).</li>
- * <li>Build {@code nodeId → subsystemId} lookup from
- * {@code nodeAssignments}.</li>
- * <li>Iterate through all weighted graph edges once. For every edge where
- * source and target belong to different subsystems, mark both endpoints
- * as boundary nodes and track incoming/outgoing cross-subsystem edge
- * counts.</li>
- * <li>Calculate a normalised {@code boundaryScore} for each boundary node.</li>
- * <li>Return overview statistics and the top N nodes by score.</li>
+ *   <li>Checks the ephemeral in-process Caffeine cache for already computed analysis results.</li>
+ *   <li>On cache miss, loads the discovery response and graph once and computes the analysis.</li>
+ *   <li>Applies filtering, sorting, and limiting directly on internal model objects before mapping to DTOs.</li>
+ *   <li>Maps only the limited subset to response DTOs.</li>
  * </ol>
- *
- * <p>
- * Performance: Uses {@link HashMap} for O(1) lookups. Single pass through
- * edges → O(E). Suitable for graphs with 20K–100K+ nodes.
  */
 @Service
 public class BoundaryNodeServiceImpl implements BoundaryNodeService {
 
     private final SubsystemDiscoveryService discoveryService;
     private final SubsystemHistoryMapper subsystemHistoryMapper;
+    private final BoundaryAnalysisService analysisService;
+    private final BoundaryNodeResponseMapper responseMapper;
+    private final BoundaryAnalysisCache analysisCache;
 
     public BoundaryNodeServiceImpl(SubsystemDiscoveryService discoveryService,
-                                   SubsystemHistoryMapper subsystemHistoryMapper) {
+                                   SubsystemHistoryMapper subsystemHistoryMapper,
+                                   BoundaryAnalysisService analysisService,
+                                   BoundaryNodeResponseMapper responseMapper,
+                                   BoundaryAnalysisCache analysisCache) {
         this.discoveryService = discoveryService;
         this.subsystemHistoryMapper = subsystemHistoryMapper;
+        this.analysisService = analysisService;
+        this.responseMapper = responseMapper;
+        this.analysisCache = analysisCache;
     }
 
     @Override
@@ -64,214 +59,238 @@ public class BoundaryNodeServiceImpl implements BoundaryNodeService {
             throw new IllegalArgumentException("discoveryRunId is required to detect boundary nodes");
         }
 
-        // 1. Fetch the master run from DB using the ID
-        SubsystemRunMaster master = subsystemHistoryMapper.selectMasterById(request.discoveryRunId());
-        if (master == null) {
-            throw new IllegalArgumentException("No discovery run found for ID: " + request.discoveryRunId());
-        }
+        // 1. Check cache first (Fix #8)
+        BoundaryAnalysisService.BoundaryAnalysisResult analysisResult = analysisCache.get(request.discoveryRunId());
+        Set<String> discoverySubsystemIds;
 
-        String analysisTime = master.getAnalysisTime();
-        SubsystemAlgorithmParams params = new SubsystemAlgorithmParams(
-                null,
-                master.getRuns(),
-                master.getConsensusThreshold(),
-                master.getResolution(),
-                null, null, null);
-
-        // 2. Load existing discovery result (returns cached if available)
-        SubsystemDiscoveryResponse discovery = discoveryService.discover(analysisTime, params);
-
-        List<NodeAssignmentDto> nodeAssignments = discovery.nodeAssignments();
-        if (nodeAssignments == null || nodeAssignments.isEmpty()) {
-            throw new IllegalStateException(
-                    "Node assignments not available for analysisTime=" + analysisTime
-                            + ". Cannot detect boundary nodes without node-to-subsystem mappings.");
-        }
-
-        // 3. Build lookup maps — O(N) with HashMap for O(1) lookups
-        Map<Long, String> nodeToSubsystem = new HashMap<>(nodeAssignments.size());
-        for (NodeAssignmentDto assignment : nodeAssignments) {
-            nodeToSubsystem.put(assignment.nodeId(), assignment.subsystemId());
-        }
-
-        Map<String, String> subsystemNames = new HashMap<>(discovery.subsystems().size());
-        for (SubsystemDto subsystem : discovery.subsystems()) {
-            subsystemNames.put(subsystem.id(), subsystem.name());
-        }
-
-        // 4. Build the weighted graph to access the edge list
-        WeightedGraph graph = discoveryService.buildWeightedGraph(analysisTime, params);
-
-        // 5. Build node name & type lookup from graph nodes — O(N)
-        Map<Long, String> nodeNames = new HashMap<>(graph.getNodes().size());
-        Map<Long, String> nodeTypes = new HashMap<>(graph.getNodes().size());
-        for (GraphNode node : graph.getNodes()) {
-            nodeNames.put(node.getId(), node.getName());
-            nodeTypes.put(node.getId(), node.getType());
-        }
-
-        // 6. Single-pass edge scan — O(E)
-        Map<Long, BoundaryAccumulator> accumulators = new HashMap<>();
-        for (WeightedEdge edge : graph.getEdges()) {
-            String sourceSubsystem = nodeToSubsystem.get(edge.getSource());
-            String targetSubsystem = nodeToSubsystem.get(edge.getTarget());
-
-            if (sourceSubsystem == null || targetSubsystem == null) {
-                continue;
-            }
-            if (sourceSubsystem.equals(targetSubsystem)) {
-                continue;
+        if (analysisResult == null) {
+            // Cache miss: load master run and cached discovery result (Fix #2: single load)
+            SubsystemRunMaster master = subsystemHistoryMapper.selectMasterById(request.discoveryRunId());
+            if (master == null) {
+                throw new IllegalArgumentException("No discovery run found for ID: " + request.discoveryRunId());
             }
 
-            // Source: outgoing cross-subsystem edge
-            accumulators.computeIfAbsent(edge.getSource(), BoundaryAccumulator::new)
-                    .addOutgoing(targetSubsystem);
+            String analysisTime = master.getAnalysisTime();
+            SubsystemAlgorithmParams params = new SubsystemAlgorithmParams(
+                    null,
+                    master.getRuns(),
+                    master.getConsensusThreshold(),
+                    master.getResolution(),
+                    null, null, null);
 
-            // Target: incoming cross-subsystem edge
-            accumulators.computeIfAbsent(edge.getTarget(), BoundaryAccumulator::new)
-                    .addIncoming(sourceSubsystem);
+            // Load discovery result and build weighted graph in one step
+            SubsystemDiscoveryService.DiscoveryWithGraph discoveryWithGraph =
+                    discoveryService.discoverWithGraph(analysisTime, params);
+            SubsystemDiscoveryResponse discovery = discoveryWithGraph.response();
+            WeightedGraph graph = discoveryWithGraph.graph();
+
+            List<NodeAssignmentDto> nodeAssignments = discovery.nodeAssignments();
+            if (nodeAssignments == null || nodeAssignments.isEmpty()) {
+                throw new IllegalStateException(
+                        "Node assignments not available for analysisTime=" + analysisTime
+                                + ". Cannot detect boundary nodes without node-to-subsystem mappings.");
+            }
+
+            // Perform core graph topology analysis
+            analysisResult = analysisService.analyze(nodeAssignments, discovery.subsystems(), graph);
+
+            // Cache the result (Fix #8)
+            analysisCache.put(request.discoveryRunId(), analysisResult);
+
+            discoverySubsystemIds = discovery.subsystems().stream()
+                    .map(com.example.subsystemdiscovery.discovery.dto.SubsystemDto::id)
+                    .collect(Collectors.toSet());
+        } else {
+            // Cache hit: load discovery subsystem IDs from the cached run master configuration
+            SubsystemRunMaster master = subsystemHistoryMapper.selectMasterById(request.discoveryRunId());
+            String analysisTime = master.getAnalysisTime();
+            SubsystemAlgorithmParams params = new SubsystemAlgorithmParams(
+                    null,
+                    master.getRuns(),
+                    master.getConsensusThreshold(),
+                    master.getResolution(),
+                    null, null, null);
+            SubsystemDiscoveryResponse discovery = discoveryService.discover(analysisTime, params);
+            discoverySubsystemIds = discovery.subsystems().stream()
+                    .map(com.example.subsystemdiscovery.discovery.dto.SubsystemDto::id)
+                    .collect(Collectors.toSet());
         }
 
-        if (accumulators.isEmpty()) {
-            // No cross-subsystem edges → no boundary nodes
-            BoundaryStatisticsDto emptyOverview = new BoundaryStatisticsDto(
-                    0, nodeAssignments.size(), 0.0,
-                    discovery.subsystems().size(), 0.0, 0.0, List.of());
-            return new BoundaryNodeResponse(emptyOverview, List.of());
+        // 2. Map interactions (uses cluster IDs directly for Fix #6)
+        List<SubsystemInteractionDto> interactions =
+                responseMapper.toInteractionDtos(analysisResult.subsystemInteractions());
+
+        // Consistency check using cluster IDs
+        for (BoundaryAnalysisService.InternalBoundaryNode node : analysisResult.boundaryNodes()) {
+            if (!discoverySubsystemIds.contains(node.owningSubsystem())) {
+                throw new IllegalStateException("Consistency error: Subsystem ID '" + node.owningSubsystem() 
+                        + "' referenced in boundary node '" + node.nodeName() + "' is not present in discovery subsystems.");
+            }
+            for (String connSubsystemId : node.perSubsystemEdges().keySet()) {
+                if (!discoverySubsystemIds.contains(connSubsystemId)) {
+                    throw new IllegalStateException("Consistency error: Target Subsystem ID '" + connSubsystemId 
+                            + "' referenced in boundary node '" + node.nodeName() + "' is not present in discovery subsystems.");
+                }
+            }
         }
 
-        // 7. Build raw boundary node list (scores not yet normalised)
-        List<RawBoundaryNode> rawNodes = new ArrayList<>(accumulators.size());
-        for (BoundaryAccumulator acc : accumulators.values()) {
-            String subsystemId = nodeToSubsystem.get(acc.nodeId);
-            int connectedCount = acc.connectedSubsystems.size();
-            int totalCross = acc.incomingCount + acc.outgoingCount;
-            double rawScore = (double) connectedCount * totalCross;
+        // 3. Filter the internal nodes directly (Fix #4)
+        List<BoundaryAnalysisService.InternalBoundaryNode> filteredInternalNodes =
+                applyNodeTypeFilter(analysisResult.boundaryNodes(), request.nodeType());
 
-            rawNodes.add(new RawBoundaryNode(
-                    acc.nodeId,
-                    nodeNames.getOrDefault(acc.nodeId, "node-" + acc.nodeId),
-                    nodeTypes.getOrDefault(acc.nodeId, "CLASS"),
-                    subsystemId,
-                    subsystemNames.getOrDefault(subsystemId, subsystemId),
-                    acc.connectedSubsystems,
-                    totalCross,
-                    acc.incomingCount,
-                    acc.outgoingCount,
-                    connectedCount,
-                    rawScore));
-        }
+        // 4. Sort the internal nodes (Fix #4)
+        List<BoundaryAnalysisService.InternalBoundaryNode> sortedInternalNodes =
+                applySorting(filteredInternalNodes, request.sortOrderOrDefault());
 
-        // 8. Normalise boundary scores to [0, 1]
-        double maxRawScore = rawNodes.stream()
-                .mapToDouble(n -> n.rawScore)
-                .max().orElse(1.0);
-        if (maxRawScore <= 0) {
-            maxRawScore = 1.0;
-        }
+        // 5. Handle drill-down or global view
+        SelectedInteractionDto selectedInteraction = null;
+        List<BoundaryNodeDto> topNodes;
 
-        final double divisor = maxRawScore;
-        Comparator<BoundaryNodeDto> comparator = Comparator.comparing(BoundaryNodeDto::boundaryScore);
-        if ("TOP".equalsIgnoreCase(request.sortOrderOrDefault())) {
-            comparator = comparator.reversed();
-        }
-        comparator = comparator.thenComparing(BoundaryNodeDto::nodeName);
+        if (request.hasDrillDown()) {
+            // Filter to nodes participating in the selected subsystem pair
+            List<BoundaryAnalysisService.InternalBoundaryNode> drillDownInternalNodes = sortedInternalNodes.stream()
+                    .filter(node -> participatesInInteraction(
+                            node, request.fromSubsystem(), request.toSubsystem()))
+                    .toList();
 
-        // Filter by requested node type if specified
-        String filterType = request.nodeType();
-        List<RawBoundaryNode> filteredRawNodes = rawNodes;
-        if (filterType != null && !filterType.trim().isEmpty() && !"ALL".equalsIgnoreCase(filterType)) {
-            filteredRawNodes = rawNodes.stream()
-                    .filter(n -> filterType.equalsIgnoreCase(n.nodeType))
+            // Find the interaction count for this pair
+            int interactionCount = interactions.stream()
+                    .filter(i -> i.fromSubsystem().equals(request.fromSubsystem())
+                            && i.toSubsystem().equals(request.toSubsystem()))
+                    .findFirst()
+                    .map(SubsystemInteractionDto::interactionCount)
+                    .orElse(0);
+
+            // Apply limit and map ONLY the top nodes to DTO (Fix #4)
+            List<BoundaryNodeDto> drillDownDtos = drillDownInternalNodes.stream()
+                    .limit(request.nodeLimitOrDefault())
+                    .map(node -> filterEdgesForDrillDown(
+                            responseMapper.toDto(node), request.fromSubsystem(), request.toSubsystem()))
+                    .toList();
+
+            selectedInteraction = responseMapper.toSelectedInteraction(
+                    request.fromSubsystem(), request.toSubsystem(),
+                    interactionCount, drillDownDtos);
+
+            topNodes = drillDownDtos;
+        } else {
+            // Global view: limit and map ONLY the top nodes to DTO (Fix #4)
+            topNodes = sortedInternalNodes.stream()
+                    .limit(request.nodeLimitOrDefault())
+                    .map(responseMapper::toDto)
                     .toList();
         }
 
-        List<BoundaryNodeDto> scoredNodes = filteredRawNodes.stream()
-                .map(raw -> new BoundaryNodeDto(
-                        raw.nodeId, raw.nodeName, raw.nodeType, raw.subsystemId, raw.subsystemName,
-                        raw.connectedSubsystems.stream()
-                                .map(id -> subsystemNames.getOrDefault(id, id))
-                                .sorted()
-                                .toList(),
-                        raw.crossEdgeCount, raw.incomingCross, raw.outgoingCross,
-                        raw.connectedCount,
-                        round(raw.rawScore / divisor)))
-                .sorted(comparator)
-                .toList();
+        // 6. Build overview from all internal nodes (before limit/drill-down)
+        BoundaryStatisticsDto overview = responseMapper.toOverview(
+                analysisResult.boundaryNodes(), interactions, analysisResult.totalNodeCount());
 
-        // 9. Build response — limited nodes
-        int limit = request.nodeLimitOrDefault();
-        List<BoundaryNodeDto> topNodes = scoredNodes.stream()
-                .limit(limit)
-                .toList();
-
-        // 10. Build overview statistics
-        double avgConnections = scoredNodes.stream()
-                .mapToInt(BoundaryNodeDto::totalConnectedSubsystems)
-                .average().orElse(0.0);
-
-        double maxBoundaryScore = scoredNodes.isEmpty() ? 0.0
-                : scoredNodes.get(0).boundaryScore();
-
-        List<String> topCriticalNames = topNodes.stream()
-                .limit(5)
-                .map(BoundaryNodeDto::nodeName)
-                .toList();
-
-        BoundaryStatisticsDto overview = new BoundaryStatisticsDto(
-                scoredNodes.size(),
-                nodeAssignments.size(),
-                nodeAssignments.isEmpty() ? 0.0
-                        : round((double) scoredNodes.size() / nodeAssignments.size()),
-                discovery.subsystems().size(),
-                round(avgConnections),
-                round(maxBoundaryScore),
-                topCriticalNames);
-
-        return new BoundaryNodeResponse(overview, topNodes);
+        return responseMapper.toResponse(
+                request.discoveryRunId(), overview, topNodes,
+                interactions, selectedInteraction);
     }
 
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
-
-    private static double round(double value) {
-        return Math.round(value * 1000.0) / 1000.0;
+    private List<BoundaryAnalysisService.InternalBoundaryNode> applyNodeTypeFilter(
+            List<BoundaryAnalysisService.InternalBoundaryNode> nodes, String nodeType) {
+        if (nodeType == null || nodeType.trim().isEmpty() || "ALL".equalsIgnoreCase(nodeType)) {
+            return nodes;
+        }
+        return nodes.stream()
+                .filter(n -> nodeType.equalsIgnoreCase(n.nodeType()))
+                .toList();
     }
 
-    /**
-     * Mutable accumulator for a single boundary node during the edge scan.
-     */
-    private static class BoundaryAccumulator {
-        final Long nodeId;
-        int outgoingCount;
-        int incomingCount;
-        final Set<String> connectedSubsystems = new HashSet<>();
+    private List<BoundaryAnalysisService.InternalBoundaryNode> applySorting(
+            List<BoundaryAnalysisService.InternalBoundaryNode> nodes, String sortOrder) {
+        if (sortOrder == null) {
+            sortOrder = "SCORE_DESC";
+        }
+        Comparator<BoundaryAnalysisService.InternalBoundaryNode> comparator = switch (sortOrder) {
+            case "NODE_NAME_ASC" ->
+                    Comparator.comparing(BoundaryAnalysisService.InternalBoundaryNode::nodeName);
+            case "NODE_NAME_DESC" ->
+                    Comparator.comparing(BoundaryAnalysisService.InternalBoundaryNode::nodeName).reversed();
+            case "OUTGOING_ASC" ->
+                    Comparator.comparingInt(BoundaryAnalysisService.InternalBoundaryNode::outgoingCrossEdges);
+            case "OUTGOING_DESC" ->
+                    Comparator.comparingInt(BoundaryAnalysisService.InternalBoundaryNode::outgoingCrossEdges).reversed();
+            case "INCOMING_ASC" ->
+                    Comparator.comparingInt(BoundaryAnalysisService.InternalBoundaryNode::incomingCrossEdges);
+            case "INCOMING_DESC" ->
+                    Comparator.comparingInt(BoundaryAnalysisService.InternalBoundaryNode::incomingCrossEdges).reversed();
+            case "SCORE_ASC" ->
+                    Comparator.comparingDouble(BoundaryAnalysisService.InternalBoundaryNode::boundaryScore);
+            case "SCORE_DESC" ->
+                    Comparator.comparingDouble(BoundaryAnalysisService.InternalBoundaryNode::boundaryScore).reversed();
+            case "LEAST_CONNECTED" ->
+                    Comparator.comparingDouble(BoundaryAnalysisService.InternalBoundaryNode::boundaryScore);
+            case "MOST_INCOMING" ->
+                    Comparator.comparingInt(BoundaryAnalysisService.InternalBoundaryNode::incomingCrossEdges).reversed();
+            case "MOST_OUTGOING" ->
+                    Comparator.comparingInt(BoundaryAnalysisService.InternalBoundaryNode::outgoingCrossEdges).reversed();
+            default -> // MOST_CONNECTED or default
+                    Comparator.comparingDouble(BoundaryAnalysisService.InternalBoundaryNode::boundaryScore).reversed();
+        };
 
-        BoundaryAccumulator(Long nodeId) {
-            this.nodeId = nodeId;
+        if (!sortOrder.startsWith("NODE_NAME")) {
+            comparator = comparator.thenComparing(BoundaryAnalysisService.InternalBoundaryNode::nodeName);
         }
 
-        void addOutgoing(String targetSubsystem) {
-            outgoingCount++;
-            connectedSubsystems.add(targetSubsystem);
-        }
-
-        void addIncoming(String sourceSubsystem) {
-            incomingCount++;
-            connectedSubsystems.add(sourceSubsystem);
-        }
+        return nodes.stream().sorted(comparator).collect(Collectors.toList());
     }
 
-    /**
-     * Intermediate holder before score normalisation. Avoids constructing
-     * the immutable {@link BoundaryNodeDto} record twice.
-     */
-    private record RawBoundaryNode(
-            Long nodeId, String nodeName, String nodeType,
-            String subsystemId, String subsystemName,
-            Set<String> connectedSubsystems,
-            int crossEdgeCount, int incomingCross, int outgoingCross,
-            int connectedCount, double rawScore) {
+    private boolean participatesInInteraction(
+            BoundaryAnalysisService.InternalBoundaryNode node, String fromSubsystem, String toSubsystem) {
+        String owning = node.owningSubsystem().trim();
+        String from = fromSubsystem.trim();
+        String to = toSubsystem.trim();
+
+        if (owning.equalsIgnoreCase(from)) {
+            return node.perSubsystemEdges().containsKey(to);
+        }
+        if (owning.equalsIgnoreCase(to)) {
+            return node.perSubsystemEdges().containsKey(from);
+        }
+        return false;
+    }
+
+    private BoundaryNodeDto filterEdgesForDrillDown(
+            BoundaryNodeDto node, String fromSubsystem, String toSubsystem) {
+        int incoming = 0;
+        int outgoing = 0;
+
+        String owning = node.owningSubsystem().trim();
+        String from = fromSubsystem.trim();
+        String to = toSubsystem.trim();
+
+        if (owning.equalsIgnoreCase(from)) {
+            outgoing = node.connectedSubsystems().stream()
+                    .filter(c -> c.subsystem().trim().equalsIgnoreCase(to))
+                    .mapToInt(ConnectedSubsystemDto::outgoingEdges)
+                    .sum();
+            incoming = node.connectedSubsystems().stream()
+                    .filter(c -> c.subsystem().trim().equalsIgnoreCase(to))
+                    .mapToInt(ConnectedSubsystemDto::incomingEdges)
+                    .sum();
+        } else if (owning.equalsIgnoreCase(to)) {
+            incoming = node.connectedSubsystems().stream()
+                    .filter(c -> c.subsystem().trim().equalsIgnoreCase(from))
+                    .mapToInt(ConnectedSubsystemDto::incomingEdges)
+                    .sum();
+            outgoing = node.connectedSubsystems().stream()
+                    .filter(c -> c.subsystem().trim().equalsIgnoreCase(from))
+                    .mapToInt(ConnectedSubsystemDto::outgoingEdges)
+                    .sum();
+        }
+
+        return new BoundaryNodeDto(
+                node.nodeName(),
+                node.nodeType(),
+                node.owningSubsystem(),
+                node.connectedSubsystems(),
+                incoming,
+                outgoing,
+                node.boundaryScore()
+        );
     }
 }
